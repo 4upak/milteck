@@ -1,0 +1,60 @@
+Case 1
+ammoName = VOG-17
+timeOfFlight = 6.61589
+horizontalDistance = 100.066
+distanceToTarget = 72.111
+needManeuver = YES
+intermediateX = 64.2595
+intermediateY = 26.173
+ratio = 0.13036
+fireX = 76.7403
+fireY = 34.4935
+
+Case 2
+ammoName = M67
+timeOfFlight = 6.07748
+horizontalDistance = 96.9298
+distanceToTarget = 72.111
+needManeuver = YES
+intermediateX = 66.8688
+intermediateY = 27.9125
+ratio = 0.134013
+fireX = 79.3496
+fireY = 36.233
+
+Case 3
+ammoName = RKG-3
+timeOfFlight = 5.36153
+horizontalDistance = 104.212
+distanceToTarget = 72.111
+needManeuver = YES
+intermediateX = 60.8097
+intermediateY = 23.8731
+ratio = 0.125826
+fireX = 73.2904
+fireY = 32.1936
+
+Case 4
+ammoName = GLIDING-VOG
+timeOfFlight = 6.98439
+horizontalDistance = 89.0631
+distanceToTarget = 72.111
+needManeuver = YES
+intermediateX = 73.4142
+intermediateY = 32.2762
+ratio = 0.144143
+fireX = 85.895
+fireY = 40.5967
+
+Case 5
+ammoName = GLIDING-RKG
+timeOfFlight = 5.76562
+horizontalDistance = 127.177
+distanceToTarget = 72.111
+needManeuver = YES
+intermediateX = 41.7017
+intermediateY = 11.1345
+ratio = 0.105502
+fireX = 54.1825
+fireY = 19.455
+

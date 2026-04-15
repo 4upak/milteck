@@ -1,0 +1,586 @@
+#define _USE_MATH_DEFINES
+#include <cmath>
+#include <cstring>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <string>
+#include <vector>
+
+const double G = 9.81;
+const double EPS = 1e-9;
+
+// Структура з параметрами боєприпасу:
+// m - маса,
+// d - коефіцієнт аеродинамічного опору,
+// l - коефіцієнт підйомної сили для планеруючих боєприпасів.
+struct AmmoInfo {
+    double m;
+    double d;
+    double l;
+};
+
+// У цій структурі зберігаємо повний результат розрахунку для одного кейсу.
+// Вона потрібна не лише для виводу в output.txt, а й для подальшої
+// побудови візуалізації траєкторії у файлі SVG.
+struct CaseResult {
+    int caseNumber;               // Номер тестового кейсу з input.txt
+    double xd;                    // Початкова координата дрона по осі X
+    double yd;                    // Початкова координата дрона по осі Y
+    double zd;                    // Висота дрона в момент початку розрахунку
+    double targetX;               // Координата цілі по осі X
+    double targetY;               // Координата цілі по осі Y
+    double attackSpeed;           // Швидкість атаки дрона перед скиданням
+    double accelerationPath;      // Довжина розгону дрона перед атакою
+    std::string ammoName;         // Назва обраного боєприпасу
+    AmmoInfo ammo;                // Параметри цього боєприпасу: маса, drag, lift
+    double timeOfFlight;          // Обчислений час польоту боєприпасу до землі
+    double horizontalDistance;    // Горизонтальна дистанція, яку пролетить боєприпас
+    double distanceToTarget;      // Пряма відстань від дрона до цілі
+    bool needManeuver;            // Ознака того, чи потрібно відлетіти далі перед атакою
+    double intermediateX;         // X-координата проміжної точки для маневру
+    double intermediateY;         // Y-координата проміжної точки для маневру
+    double ratio;                 // Пропорція для обчислення точки скиду відносно цілі
+    double fireX;                 // X-координата точки скиду боєприпасу
+    double fireY;                 // Y-координата точки скиду боєприпасу
+};
+
+// Пошук параметрів боєприпасу за його назвою.
+// Дані читаються з окремого файлу ammo_data.txt, де в кожному рядку
+// зберігаються: назва, маса, drag, lift.
+// Якщо назву знайдено, заповнюємо структуру ammo і повертаємо true.
+// Якщо файл не відкрився або назва відсутня, повертаємо false.
+bool getAmmoInfo(const char ammoName[], AmmoInfo& ammo) {
+    std::ifstream ammoFile("ammo_data.txt");
+    if (!ammoFile.is_open()) {
+        return false;
+    }
+
+    char fileAmmoName[64];
+    double m, d, l;
+
+    while (ammoFile >> fileAmmoName >> m >> d >> l) {
+        if (std::strcmp(ammoName, fileAmmoName) == 0) {
+            ammo.m = m;
+            ammo.d = d;
+            ammo.l = l;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Розв'язання кубічного рівняння методом Кардано.
+// Тут використовується форма, наведена в умові задачі:
+// a * t^3 + b * t^2 + c = 0
+// Функція повертає додатній фізично коректний корінь t,
+// а через прапорець ok повідомляє, чи був знайдений коректний розв'язок.
+double solveCardanoTime(double a, double b, double c, bool& ok) {
+    ok = false;
+
+    // Якщо коефіцієнт a майже нульовий, рівняння втрачає кубічний характер,
+    // тому в межах цієї моделі вважаємо такий випадок невалідним.
+    if (std::fabs(a) < EPS) {
+        return 0.0;
+    }
+
+    // Перехід до зведеного вигляду рівняння.
+    double p = -(b * b) / (3.0 * a * a);
+    double q = (2.0 * b * b * b) / (27.0 * a * a * a) + c / a;
+
+    // Тригонометрична форма Кардано для цього варіанта працює при p < 0.
+    if (p >= 0.0) {
+        return 0.0;
+    }
+
+    // Аргумент arccos обов'язково має лежати в межах [-1; 1],
+    // інакше модель не дає коректного фізичного розв'язку.
+    double acosArg = (3.0 * q / (2.0 * p)) * std::sqrt(-3.0 / p);
+    if (acosArg < -1.0 || acosArg > 1.0) {
+        return 0.0;
+    }
+
+    double phi = std::acos(acosArg);
+    double rootBase = 2.0 * std::sqrt(-p / 3.0);
+
+    double t1 = rootBase * std::cos(phi / 3.0) - b / (3.0 * a);
+    double t2 = rootBase * std::cos((phi + 2.0 * M_PI) / 3.0) - b / (3.0 * a);
+    double t3 = rootBase * std::cos((phi + 4.0 * M_PI) / 3.0) - b / (3.0 * a);
+
+    // За умовою задачі пріоритетно обираємо саме корінь
+    // з (phi + 4 * pi) / 3. Якщо він дає додатний фізично коректний час,
+    // використовуємо його без додаткового вибору між іншими коренями.
+    if (t3 > EPS) {
+        ok = true;
+        return t3;
+    }
+
+    // Якщо пріоритетний корінь виявився невалідним, тоді як запасний варіант
+    // перевіряємо інші корені, щоб не втрачати розв'язок повністю.
+    if (t2 > EPS) {
+        ok = true;
+        return t2;
+    }
+
+    if (t1 > EPS) {
+        ok = true;
+        return t1;
+    }
+
+    return 0.0;
+}
+
+// Обчислення горизонтальної дистанції польоту за степеневим рядом до t^5.
+// Саме ця формула враховує drag і lift та використовується в умові задачі.
+double calcHorizontalDistance(double t, double m, double d, double l, double V0) {
+    double term1 = V0 * t;
+
+    double term2 = -(t * t * d * V0) / (2.0 * m);
+
+    double term3 =
+        (t * t * t * (6.0 * d * G * l * m - 6.0 * d * d * (l * l - 1.0) * V0)) /
+        (36.0 * m * m);
+
+    double term4 =
+        (std::pow(t, 4.0) *
+         (-6.0 * d * d * G * l * (1.0 + l * l + l * l * l * l) * m +
+          3.0 * d * d * d * l * l * (1.0 + l * l) * V0 +
+          6.0 * d * d * d * l * l * l * l * (1.0 + l * l) * V0)) /
+        (36.0 * std::pow(1.0 + l * l, 2.0) * m * m * m);
+
+    double term5 =
+        (std::pow(t, 5.0) *
+         (3.0 * d * d * d * G * l * l * l * m -
+          3.0 * std::pow(d, 4.0) * l * l * (1.0 + l * l) * V0)) /
+        (36.0 * (1.0 + l * l) * std::pow(m, 4.0));
+
+    return term1 + term2 + term3 + term4 + term5;
+}
+
+// Оцінка висоти в момент часу t.
+// Ця функція потрібна тільки для побудови бокового профілю траєкторії.
+// Якщо обчислена висота виходить нижче землі, примусово обрізаємо її до нуля.
+double calcAltitude(double t, double z0, double a, double b, double m) {
+    double z = z0 + (b * t * t) / (6.0 * m * m) + (a * t * t * t) / (6.0 * m * m);
+    if (z < 0.0) {
+        z = 0.0;
+    }
+    return z;
+}
+
+// Запис службового заголовка SVG-файлу:
+// розмір полотна, фон і стилі для тексту, осей та траєкторії.
+void writeSvgHeader(std::ofstream& svg, int width, int height) {
+    svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+        << "\" height=\"" << height
+        << "\" viewBox=\"0 0 " << width << ' ' << height << "\">\n";
+    svg << "<rect width=\"100%\" height=\"100%\" fill=\"#0f172a\"/>\n";
+    svg << "<style>\n";
+    svg << "text { fill: #e2e8f0; font-family: Arial, sans-serif; }\n";
+    svg << ".label { font-size: 13px; }\n";
+    svg << ".title { font-size: 18px; font-weight: bold; }\n";
+    svg << ".small { font-size: 11px; }\n";
+    svg << ".legend { font-size: 12px; }\n";
+    svg << ".grid { stroke: #334155; stroke-width: 1; }\n";
+    svg << ".axis { stroke: #94a3b8; stroke-width: 2; }\n";
+    svg << ".path { fill: none; stroke: #38bdf8; stroke-width: 3; }\n";
+    svg << ".guide { fill: none; stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 6 4; }\n";
+    svg << "</style>\n";
+}
+
+// Формування файлу trajectories.svg.
+// Для кожного кейсу будується дві проєкції:
+// 1. Вид зверху - положення дрона, цілі, точки скиду та проміжної точки.
+// 2. Вид збоку - профіль польоту боєприпасу по висоті.
+void writeTrajectorySvg(const std::vector<CaseResult>& results) {
+    std::ofstream svg("trajectories.svg");
+    if (!svg.is_open()) {
+        std::cout << "Warning: cannot create trajectories.svg\n";
+        return;
+    }
+
+    int panelWidth = 980;
+    int panelHeight = 320;
+    int headerHeight = 110;
+    int totalHeight = headerHeight + static_cast<int>(results.size()) * panelHeight;
+    writeSvgHeader(svg, panelWidth, totalHeight);
+
+    svg << "<text x=\"30\" y=\"30\" class=\"title\">Trajectory Visualization</text>\n";
+    svg << "<rect x=\"30\" y=\"42\" width=\"920\" height=\"52\" rx=\"10\" fill=\"#111827\" stroke=\"#334155\"/>\n";
+    svg << "<circle cx=\"55\" cy=\"61\" r=\"6\" fill=\"#22c55e\"/>\n";
+    svg << "<text x=\"68\" y=\"65\" class=\"legend\">drone - початкова позиція дрона</text>\n";
+    svg << "<circle cx=\"315\" cy=\"61\" r=\"6\" fill=\"#f59e0b\"/>\n";
+    svg << "<text x=\"328\" y=\"65\" class=\"legend\">intermediate - точка маневру перед атакою</text>\n";
+    svg << "<circle cx=\"625\" cy=\"61\" r=\"6\" fill=\"#38bdf8\"/>\n";
+    svg << "<text x=\"638\" y=\"65\" class=\"legend\">drop - точка скиду боєприпасу</text>\n";
+    svg << "<circle cx=\"55\" cy=\"82\" r=\"6\" fill=\"#ef4444\"/>\n";
+    svg << "<text x=\"68\" y=\"86\" class=\"legend\">target - координати цілі</text>\n";
+    svg << "<line x1=\"315\" y1=\"82\" x2=\"380\" y2=\"82\" class=\"guide\"/>\n";
+    svg << "<text x=\"390\" y=\"86\" class=\"legend\">маршрут: drone -> intermediate -> drop -> target</text>\n";
+
+    for (size_t i = 0; i < results.size(); ++i) {
+        const CaseResult& r = results[i];
+
+        // Кожен кейс малюється у власній горизонтальній секції,
+        // щоб траєкторії не накладалися одна на одну.
+        double baseY = static_cast<double>(headerHeight) + static_cast<double>(i) * panelHeight;
+
+        double topLeftX = 30.0;
+        double topLeftY = baseY + 20.0;
+        double topWidth = 430.0;
+        double topHeight = 220.0;
+
+        double sideLeftX = 520.0;
+        double sideLeftY = baseY + 20.0;
+        double sideWidth = 430.0;
+        double sideHeight = 220.0;
+
+        // Визначаємо межі координат для виду зверху.
+        // У розрахунок беруться всі важливі точки: дрон, ціль,
+        // проміжна точка маневру та точка скиду.
+        double minX = r.fireX;
+        double maxX = r.targetX;
+        if (r.xd < minX) minX = r.xd;
+        if (r.xd > maxX) maxX = r.xd;
+        if (r.intermediateX < minX) minX = r.intermediateX;
+        if (r.intermediateX > maxX) maxX = r.intermediateX;
+
+        double minY = r.fireY;
+        double maxY = r.targetY;
+        if (r.yd < minY) minY = r.yd;
+        if (r.yd > maxY) maxY = r.yd;
+        if (r.intermediateY < minY) minY = r.intermediateY;
+        if (r.intermediateY > maxY) maxY = r.intermediateY;
+
+        double padX = std::max(20.0, (maxX - minX) * 0.15);
+        double padY = std::max(20.0, (maxY - minY) * 0.15);
+        minX -= padX;
+        maxX += padX;
+        minY -= padY;
+        maxY += padY;
+
+        // Розмір області у "світових" координатах.
+        // Захист через max(1.0, ...) потрібен, щоб уникнути ділення на нуль.
+        double worldWidth = std::max(1.0, maxX - minX);
+        double worldHeight = std::max(1.0, maxY - minY);
+
+        // Перетворення реальних координат X/Y у координати SVG-полотна.
+        auto mapTopX = [&](double x) {
+            return topLeftX + (x - minX) / worldWidth * topWidth;
+        };
+        auto mapTopY = [&](double y) {
+            return topLeftY + topHeight - (y - minY) / worldHeight * topHeight;
+        };
+
+        // Перетворення дистанції та висоти у координати бокового графіка.
+        auto mapSideX = [&](double distance) {
+            return sideLeftX + distance / std::max(r.horizontalDistance, 1.0) * sideWidth;
+        };
+        auto mapSideY = [&](double z) {
+            return sideLeftY + sideHeight - z / std::max(r.zd, 1.0) * sideHeight;
+        };
+
+        svg << "<text x=\"" << topLeftX << "\" y=\"" << baseY
+            << "\" class=\"title\">Case " << r.caseNumber
+            << " (" << r.ammoName << ")</text>\n";
+
+        svg << "<rect x=\"" << topLeftX << "\" y=\"" << topLeftY
+            << "\" width=\"" << topWidth << "\" height=\"" << topHeight
+            << "\" fill=\"#111827\" stroke=\"#475569\"/>\n";
+        svg << "<rect x=\"" << sideLeftX << "\" y=\"" << sideLeftY
+            << "\" width=\"" << sideWidth << "\" height=\"" << sideHeight
+            << "\" fill=\"#111827\" stroke=\"#475569\"/>\n";
+
+        svg << "<text x=\"" << topLeftX << "\" y=\"" << topLeftY - 6
+            << "\" class=\"label\">Top view (X/Y)</text>\n";
+        svg << "<text x=\"" << sideLeftX << "\" y=\"" << sideLeftY - 6
+            << "\" class=\"label\">Side view (distance/height)</text>\n";
+
+        // Пунктирна лінія на верхньому графіку показує напрямок
+        // від початкової позиції дрона до цілі.
+        svg << "<line x1=\"" << mapTopX(r.xd) << "\" y1=\"" << mapTopY(r.yd)
+            << "\" x2=\"" << mapTopX(r.targetX) << "\" y2=\"" << mapTopY(r.targetY)
+            << "\" class=\"guide\"/>\n";
+
+        // Якщо маневр потрібен, додатково позначаємо проміжну точку,
+        // куди дрон має відлетіти перед заходом на атаку.
+        if (r.needManeuver) {
+            svg << "<circle cx=\"" << mapTopX(r.intermediateX)
+                << "\" cy=\"" << mapTopY(r.intermediateY)
+                << "\" r=\"5\" fill=\"#f59e0b\"/>\n";
+            svg << "<text x=\"" << mapTopX(r.intermediateX) + 8
+                << "\" y=\"" << mapTopY(r.intermediateY) - 8
+                << "\" class=\"small\">intermediate</text>\n";
+        }
+
+        svg << "<circle cx=\"" << mapTopX(r.xd) << "\" cy=\"" << mapTopY(r.yd)
+            << "\" r=\"6\" fill=\"#22c55e\"/>\n";
+        svg << "<text x=\"" << mapTopX(r.xd) + 8 << "\" y=\"" << mapTopY(r.yd) - 8
+            << "\" class=\"small\">drone</text>\n";
+
+        svg << "<circle cx=\"" << mapTopX(r.fireX) << "\" cy=\"" << mapTopY(r.fireY)
+            << "\" r=\"6\" fill=\"#38bdf8\"/>\n";
+        svg << "<text x=\"" << mapTopX(r.fireX) + 8 << "\" y=\"" << mapTopY(r.fireY) - 8
+            << "\" class=\"small\">drop</text>\n";
+
+        svg << "<circle cx=\"" << mapTopX(r.targetX) << "\" cy=\"" << mapTopY(r.targetY)
+            << "\" r=\"6\" fill=\"#ef4444\"/>\n";
+        svg << "<text x=\"" << mapTopX(r.targetX) + 8 << "\" y=\"" << mapTopY(r.targetY) - 8
+            << "\" class=\"small\">target</text>\n";
+
+        svg << "<line x1=\"" << mapSideX(0.0) << "\" y1=\"" << mapSideY(0.0)
+            << "\" x2=\"" << mapSideX(r.horizontalDistance) << "\" y2=\"" << mapSideY(0.0)
+            << "\" class=\"axis\"/>\n";
+
+        // Траєкторія на боковому графіку будується як ламана з набору точок.
+        // Для цього рівномірно ділимо час польоту на samples частин.
+        svg << "<path d=\"";
+        const int samples = 60;
+        for (int step = 0; step <= samples; ++step) {
+            double t = r.timeOfFlight * static_cast<double>(step) / static_cast<double>(samples);
+            double distance = calcHorizontalDistance(t, r.ammo.m, r.ammo.d, r.ammo.l, r.attackSpeed);
+            if (distance < 0.0) {
+                distance = 0.0;
+            }
+            if (distance > r.horizontalDistance) {
+                distance = r.horizontalDistance;
+            }
+
+            // Висота в конкретний момент часу потрібна тільки для візуалізації,
+            // тому тут повторно використовуються вже відомі коефіцієнти моделі.
+            double z = calcAltitude(t, r.zd, r.ammo.d * G * r.ammo.m - 2.0 * r.ammo.d * r.ammo.d * r.ammo.l * r.attackSpeed,
+                                    -3.0 * G * r.ammo.m * r.ammo.m + 3.0 * r.ammo.d * r.ammo.l * r.ammo.m * r.attackSpeed,
+                                    r.ammo.m);
+
+            if (step == 0) {
+                svg << "M " << mapSideX(distance) << ' ' << mapSideY(z) << ' ';
+            } else {
+                svg << "L " << mapSideX(distance) << ' ' << mapSideY(z) << ' ';
+            }
+        }
+        svg << "\" class=\"path\"/>\n";
+
+        svg << "<text x=\"" << sideLeftX << "\" y=\"" << sideLeftY + sideHeight + 22
+            << "\" class=\"small\">t=" << std::fixed << std::setprecision(2) << r.timeOfFlight
+            << " s, h=" << r.horizontalDistance
+            << " m, D=" << r.distanceToTarget << " m</text>\n";
+    }
+
+    svg << "</svg>\n";
+    std::cout << "Trajectory visualization written to trajectories.svg\n";
+}
+
+int main() {
+    // Вхідні дані читаємо з input.txt,
+    // основні результати зберігаємо у output.txt,
+    // а детальний звіт - у report.txt.
+    std::ifstream fin("input.txt");
+    std::ofstream fout("output.txt");
+    std::ofstream freport("report.txt");
+
+    if (!fin.is_open()) {
+        std::cout << "Error: cannot open input.txt\n";
+        return 1;
+    }
+
+    if (!fout.is_open()) {
+        std::cout << "Error: cannot open output.txt\n";
+        return 1;
+    }
+
+    if (!freport.is_open()) {
+        std::cout << "Error: cannot open report.txt\n";
+        return 1;
+    }
+
+    std::cout << "Program started\n";
+    std::cout << "Reading data from input.txt\n";
+
+    // Змінні для поточного набору вхідних даних.
+    double xd, yd, zd;
+    double targetX, targetY;
+    double attackSpeed;
+    double accelerationPath;
+    char ammo_name[64];
+    int caseNumber = 0;
+
+    // У цей вектор складаємо всі обчислені кейси,
+    // щоб після завершення розрахунків побудувати спільну візуалізацію.
+    std::vector<CaseResult> results;
+
+    // Програма читає одразу багато наборів даних з одного файлу.
+    // Кожні 8 значень утворюють окремий кейс.
+    while (fin >> xd >> yd >> zd
+               >> targetX >> targetY
+               >> attackSpeed
+               >> accelerationPath
+               >> ammo_name) {
+        caseNumber++;
+        std::cout << "\n=== Case " << caseNumber << " ===\n";
+        std::cout << "Drone: x=" << xd << ", y=" << yd << ", z=" << zd << '\n';
+        std::cout << "Target: x=" << targetX << ", y=" << targetY << '\n';
+        std::cout << "Attack speed: " << attackSpeed << '\n';
+        std::cout << "Acceleration path: " << accelerationPath << '\n';
+        std::cout << "Ammo: " << ammo_name << '\n';
+
+        // Підтягуємо характеристики боєприпасу з таблиці.
+        AmmoInfo ammo;
+        if (!getAmmoInfo(ammo_name, ammo)) {
+            std::cout << "Error: unknown ammo type\n";
+            fout << "Case " << caseNumber << ": Error: unknown ammo type\n";
+            freport << "Case " << caseNumber << ": Error: unknown ammo type\n";
+            return 1;
+        }
+
+        std::cout << "Ammo parameters loaded: m=" << ammo.m
+                  << ", d=" << ammo.d
+                  << ", l=" << ammo.l << '\n';
+
+        // Коефіцієнти кубічного рівняння для обчислення часу польоту.
+        double a = ammo.d * G * ammo.m - 2.0 * ammo.d * ammo.d * ammo.l * attackSpeed;
+        double b = -3.0 * G * ammo.m * ammo.m + 3.0 * ammo.d * ammo.l * ammo.m * attackSpeed;
+        double c = 6.0 * ammo.m * ammo.m * zd;
+
+        std::cout << "Cardano coefficients: a=" << a
+                  << ", b=" << b
+                  << ", c=" << c << '\n';
+
+        bool timeOk = false;
+        double t = solveCardanoTime(a, b, c, timeOk);
+        if (!timeOk || t <= EPS) {
+            std::cout << "Error: invalid flight time\n";
+            fout << "Case " << caseNumber << ": Error: invalid flight time\n";
+            freport << "Case " << caseNumber << ": Error: invalid flight time\n";
+            return 1;
+        }
+
+        // Горизонтальна дистанція, яку пройде боєприпас за час t.
+        std::cout << "Time of flight: " << t << '\n';
+
+        double h = calcHorizontalDistance(t, ammo.m, ammo.d, ammo.l, attackSpeed);
+        if (h <= EPS) {
+            std::cout << "Error: invalid horizontal distance\n";
+            fout << "Case " << caseNumber << ": Error: invalid horizontal distance\n";
+            freport << "Case " << caseNumber << ": Error: invalid horizontal distance\n";
+            return 1;
+        }
+
+        std::cout << "Horizontal distance: " << h << '\n';
+
+        // Геометрична відстань від поточної позиції дрона до цілі.
+        double dx = targetX - xd;
+        double dy = targetY - yd;
+        double D = std::sqrt(dx * dx + dy * dy);
+        if (D <= EPS) {
+            std::cout << "Error: invalid distance to target\n";
+            fout << "Case " << caseNumber << ": Error: invalid distance to target\n";
+            freport << "Case " << caseNumber << ": Error: invalid distance to target\n";
+            return 1;
+        }
+
+        std::cout << "Distance to target D: " << D << '\n';
+
+        double intermediateX = xd;
+        double intermediateY = yd;
+
+        // Якщо сумарна потрібна відстань більша за поточну дистанцію до цілі,
+        // дрону спершу треба відлетіти далі від цілі.
+        bool needManeuver = (h + accelerationPath > D);
+
+        std::cout << "Checking maneuver: h + accelerationPath = "
+                  << (h + accelerationPath) << '\n';
+        std::cout << "Need maneuver: " << (needManeuver ? "YES" : "NO") << '\n';
+
+        if (needManeuver) {
+            intermediateX = targetX - (targetX - xd) * (h + accelerationPath) / D;
+            intermediateY = targetY - (targetY - yd) * (h + accelerationPath) / D;
+            std::cout << "Intermediate point: x=" << intermediateX
+                      << ", y=" << intermediateY << '\n';
+        }
+
+        // Після маневру точка початку атаки змінюється:
+        // якщо маневр був потрібен, дрон починає атаку з intermediate point.
+        // Саме від цієї точки далі треба рахувати координати скиду.
+        double attackStartX = intermediateX;
+        double attackStartY = intermediateY;
+        double attackDx = targetX - attackStartX;
+        double attackDy = targetY - attackStartY;
+        double attackDistance = std::sqrt(attackDx * attackDx + attackDy * attackDy);
+        if (attackDistance <= EPS) {
+            std::cout << "Error: invalid attack start distance\n";
+            fout << "Case " << caseNumber << ": Error: invalid attack start distance\n";
+            freport << "Case " << caseNumber << ": Error: invalid attack start distance\n";
+            return 1;
+        }
+
+        // ratio показує, яку частку від відстані до цілі треба пройти
+        // від поточної точки початку атаки до точки скиду.
+        double ratio = 0.0;
+        double fireX = attackStartX;
+        double fireY = attackStartY;
+
+        ratio = (attackDistance - h) / attackDistance;
+        fireX = attackStartX + attackDx * ratio;
+        fireY = attackStartY + attackDy * ratio;
+
+        std::cout << "Ratio: " << ratio << '\n';
+        std::cout << "Drop point: x=" << fireX << ", y=" << fireY << '\n';
+        std::cout << "Case " << caseNumber << " completed\n";
+
+        // Зберігаємо повний результат кейсу для побудови візуалізації.
+        CaseResult result;
+        result.caseNumber = caseNumber;
+        result.xd = xd;
+        result.yd = yd;
+        result.zd = zd;
+        result.targetX = targetX;
+        result.targetY = targetY;
+        result.attackSpeed = attackSpeed;
+        result.accelerationPath = accelerationPath;
+        result.ammoName = ammo_name;
+        result.ammo = ammo;
+        result.timeOfFlight = t;
+        result.horizontalDistance = h;
+        result.distanceToTarget = D;
+        result.needManeuver = needManeuver;
+        result.intermediateX = intermediateX;
+        result.intermediateY = intermediateY;
+        result.ratio = ratio;
+        result.fireX = fireX;
+        result.fireY = fireY;
+        results.push_back(result);
+
+        // У output.txt записуємо тільки координати точки скиду.
+        fout << fireX << ' ' << fireY << '\n';
+
+        // У report.txt записуємо повний детальний звіт по кейсу.
+        freport << "Case " << caseNumber << '\n';
+        freport << "ammoName = " << ammo_name << '\n';
+        freport << "timeOfFlight = " << t << '\n';
+        freport << "horizontalDistance = " << h << '\n';
+        freport << "distanceToTarget = " << D << '\n';
+        freport << "needManeuver = " << (needManeuver ? "YES" : "NO") << '\n';
+        freport << "intermediateX = " << intermediateX << '\n';
+        freport << "intermediateY = " << intermediateY << '\n';
+        freport << "ratio = " << ratio << '\n';
+        freport << "fireX = " << fireX << '\n';
+        freport << "fireY = " << fireY << '\n';
+        freport << '\n';
+    }
+
+    if (caseNumber == 0) {
+        std::cout << "Error: input file is empty or invalid\n";
+        fout << "Error: input file is empty or invalid\n";
+        freport << "Error: input file is empty or invalid\n";
+        return 1;
+    }
+
+    // Після обробки всіх кейсів формуємо файл з візуалізацією траєкторій.
+    std::cout << "\nAll cases processed successfully\n";
+    std::cout << "Results written to output.txt\n";
+    std::cout << "Detailed report written to report.txt\n";
+    writeTrajectorySvg(results);
+
+    return 0;
+}
