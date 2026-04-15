@@ -10,19 +10,16 @@
 const double G = 9.81;
 const double EPS = 1e-9;
 
-// Структура з параметрами боєприпасу:
-// m - маса,
-// d - коефіцієнт аеродинамічного опору,
-// l - коефіцієнт підйомної сили для планеруючих боєприпасів.
+// Тут просто зберігаємо параметри боєприпасу.
+// m - маса, d - опір, l - підйомна сила, якщо снаряд може планерувати.
 struct AmmoInfo {
     double m;
     double d;
     double l;
 };
 
-// У цій структурі зберігаємо повний результат розрахунку для одного кейсу.
-// Вона потрібна не лише для виводу в output.txt, а й для подальшої
-// побудови візуалізації траєкторії у файлі SVG.
+// Сюди складаємо все, що нарахували по одному кейсу.
+// Потім це йде і в `output/report`, і в SVG, шоб двічі не перераховувати.
 struct CaseResult {
     int caseNumber;               // Номер тестового кейсу з input.txt
     double xd;                    // Початкова координата дрона по осі X
@@ -45,11 +42,9 @@ struct CaseResult {
     double fireY;                 // Y-координата точки скиду боєприпасу
 };
 
-// Пошук параметрів боєприпасу за його назвою.
-// Дані читаються з окремого файлу ammo_data.txt, де в кожному рядку
-// зберігаються: назва, маса, drag, lift.
-// Якщо назву знайдено, заповнюємо структуру ammo і повертаємо true.
-// Якщо файл не відкрився або назва відсутня, повертаємо false.
+// Шукаємо потрібний тип боєприпасу в табличці.
+// Формат рядка в `ammo_data.txt` простий: name m d l.
+// Якщо знайшли - заповнюємо `ammo`, якщо ні то просто false.
 bool getAmmoInfo(const char ammoName[], AmmoInfo& ammo) {
     std::ifstream ammoFile("ammo_data.txt");
     if (!ammoFile.is_open()) {
@@ -71,31 +66,25 @@ bool getAmmoInfo(const char ammoName[], AmmoInfo& ammo) {
     return false;
 }
 
-// Розв'язання кубічного рівняння методом Кардано.
-// Тут використовується форма, наведена в умові задачі:
-// a * t^3 + b * t^2 + c = 0
-// Функція повертає додатній фізично коректний корінь t,
-// а через прапорець ok повідомляє, чи був знайдений коректний розв'язок.
+// Розв'язуємо кубічне через Кардано.
 double solveCardanoTime(double a, double b, double c, bool& ok) {
     ok = false;
 
-    // Якщо коефіцієнт a майже нульовий, рівняння втрачає кубічний характер,
-    // тому в межах цієї моделі вважаємо такий випадок невалідним.
+    // Якщо `a` майже 0, то модель вже якось криво себе веде, так шо виходимо.
     if (std::fabs(a) < EPS) {
         return 0.0;
     }
 
-    // Перехід до зведеного вигляду рівняння.
+    // Зводимо рівняння до вигляду, з яким Кардано вже нормально працює.
     double p = -(b * b) / (3.0 * a * a);
     double q = (2.0 * b * b * b) / (27.0 * a * a * a) + c / a;
 
-    // Тригонометрична форма Кардано для цього варіанта працює при p < 0.
+    // Тут потрібен випадок `p < 0`, інакше далі формула не зайде.
     if (p >= 0.0) {
         return 0.0;
     }
 
-    // Аргумент arccos обов'язково має лежати в межах [-1; 1],
-    // інакше модель не дає коректного фізичного розв'язку.
+    // Заодно страхуємо `acos`, бо якщо вилізти за [-1; 1], буде вже фігня.
     double acosArg = (3.0 * q / (2.0 * p)) * std::sqrt(-3.0 / p);
     if (acosArg < -1.0 || acosArg > 1.0) {
         return 0.0;
@@ -108,16 +97,13 @@ double solveCardanoTime(double a, double b, double c, bool& ok) {
     double t2 = rootBase * std::cos((phi + 2.0 * M_PI) / 3.0) - b / (3.0 * a);
     double t3 = rootBase * std::cos((phi + 4.0 * M_PI) / 3.0) - b / (3.0 * a);
 
-    // За умовою задачі пріоритетно обираємо саме корінь
-    // з (phi + 4 * pi) / 3. Якщо він дає додатний фізично коректний час,
-    // використовуємо його без додаткового вибору між іншими коренями.
+    // За умовою спочатку пробуємо саме цей корінь.
     if (t3 > EPS) {
         ok = true;
         return t3;
     }
 
-    // Якщо пріоритетний корінь виявився невалідним, тоді як запасний варіант
-    // перевіряємо інші корені, щоб не втрачати розв'язок повністю.
+    // Якщо основний не підійшов, беремо запасні, а то раптом розв'язок все ж є.
     if (t2 > EPS) {
         ok = true;
         return t2;
@@ -131,8 +117,7 @@ double solveCardanoTime(double a, double b, double c, bool& ok) {
     return 0.0;
 }
 
-// Обчислення горизонтальної дистанції польоту за степеневим рядом до t^5.
-// Саме ця формула враховує drag і lift та використовується в умові задачі.
+// Рахуємо горизонтальну дальність.
 double calcHorizontalDistance(double t, double m, double d, double l, double V0) {
     double term1 = V0 * t;
 
@@ -158,9 +143,8 @@ double calcHorizontalDistance(double t, double m, double d, double l, double V0)
     return term1 + term2 + term3 + term4 + term5;
 }
 
-// Оцінка висоти в момент часу t.
-// Ця функція потрібна тільки для побудови бокового профілю траєкторії.
-// Якщо обчислена висота виходить нижче землі, примусово обрізаємо її до нуля.
+// Висота в момент часу `t`.
+// Потрібно в основному для бокового графіка; нижче землі не пускаємо, обрізаємо в 0.
 double calcAltitude(double t, double z0, double a, double b, double m) {
     double z = z0 + (b * t * t) / (6.0 * m * m) + (a * t * t * t) / (6.0 * m * m);
     if (z < 0.0) {
@@ -169,8 +153,7 @@ double calcAltitude(double t, double z0, double a, double b, double m) {
     return z;
 }
 
-// Запис службового заголовка SVG-файлу:
-// розмір полотна, фон і стилі для тексту, осей та траєкторії.
+// Пишемо шапку SVG: розміри, фон, стилі. Тут без магії.
 void writeSvgHeader(std::ofstream& svg, int width, int height) {
     svg << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
         << "\" height=\"" << height
@@ -189,10 +172,8 @@ void writeSvgHeader(std::ofstream& svg, int width, int height) {
     svg << "</style>\n";
 }
 
-// Формування файлу trajectories.svg.
-// Для кожного кейсу будується дві проєкції:
-// 1. Вид зверху - положення дрона, цілі, точки скиду та проміжної точки.
-// 2. Вид збоку - профіль польоту боєприпасу по висоті.
+// Тут збираємо `trajectories.svg`.
+// Для кожного кейсу малюємо вид зверху і збоку, шоб було зрозуміліше, шо взагалі сталося.
 void writeTrajectorySvg(const std::vector<CaseResult>& results) {
     std::ofstream svg("trajectories.svg");
     if (!svg.is_open()) {
@@ -222,8 +203,7 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
     for (size_t i = 0; i < results.size(); ++i) {
         const CaseResult& r = results[i];
 
-        // Кожен кейс малюється у власній горизонтальній секції,
-        // щоб траєкторії не накладалися одна на одну.
+        // Кожен кейс малюємо в своїй смузі, інакше все налізе і буде каша.
         double baseY = static_cast<double>(headerHeight) + static_cast<double>(i) * panelHeight;
 
         double topLeftX = 30.0;
@@ -236,9 +216,8 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
         double sideWidth = 430.0;
         double sideHeight = 220.0;
 
-        // Визначаємо межі координат для виду зверху.
-        // У розрахунок беруться всі важливі точки: дрон, ціль,
-        // проміжна точка маневру та точка скиду.
+        // Підбираємо межі для top-view по всіх важливих точках.
+        // Трохи з запасом, шоб маркери не прилипали до країв.
         double minX = r.fireX;
         double maxX = r.targetX;
         if (r.xd < minX) minX = r.xd;
@@ -260,12 +239,12 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
         minY -= padY;
         maxY += padY;
 
-        // Розмір області у "світових" координатах.
-        // Захист через max(1.0, ...) потрібен, щоб уникнути ділення на нуль.
+        // Розміри світу для поточного кейсу.
+        // `max(1.0, ...)` тут чисто захист від ділення на нуль, про всяк випадок.
         double worldWidth = std::max(1.0, maxX - minX);
         double worldHeight = std::max(1.0, maxY - minY);
 
-        // Перетворення реальних координат X/Y у координати SVG-полотна.
+        // Переводимо реальні X/Y в координати картинки.
         auto mapTopX = [&](double x) {
             return topLeftX + (x - minX) / worldWidth * topWidth;
         };
@@ -273,7 +252,7 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
             return topLeftY + topHeight - (y - minY) / worldHeight * topHeight;
         };
 
-        // Перетворення дистанції та висоти у координати бокового графіка.
+        // Те саме для бокового профілю.
         auto mapSideX = [&](double distance) {
             return sideLeftX + distance / std::max(r.horizontalDistance, 1.0) * sideWidth;
         };
@@ -297,14 +276,12 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
         svg << "<text x=\"" << sideLeftX << "\" y=\"" << sideLeftY - 6
             << "\" class=\"label\">Side view (distance/height)</text>\n";
 
-        // Пунктирна лінія на верхньому графіку показує напрямок
-        // від початкової позиції дрона до цілі.
+        // Пунктиром просто показуємо загальний напрямок атаки.
         svg << "<line x1=\"" << mapTopX(r.xd) << "\" y1=\"" << mapTopY(r.yd)
             << "\" x2=\"" << mapTopX(r.targetX) << "\" y2=\"" << mapTopY(r.targetY)
             << "\" class=\"guide\"/>\n";
 
-        // Якщо маневр потрібен, додатково позначаємо проміжну точку,
-        // куди дрон має відлетіти перед заходом на атаку.
+        // Якщо маневр потрібен, позначаємо проміжну точку, куди дрон спочатку йде.
         if (r.needManeuver) {
             svg << "<circle cx=\"" << mapTopX(r.intermediateX)
                 << "\" cy=\"" << mapTopY(r.intermediateY)
@@ -333,8 +310,8 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
             << "\" x2=\"" << mapSideX(r.horizontalDistance) << "\" y2=\"" << mapSideY(0.0)
             << "\" class=\"axis\"/>\n";
 
-        // Траєкторія на боковому графіку будується як ламана з набору точок.
-        // Для цього рівномірно ділимо час польоту на samples частин.
+        // Бокову траєкторію малюємо кусочно, по набору точок.
+        // `samples = 60` вистачає, шоб виглядало норм, а не рвано.
         svg << "<path d=\"";
         const int samples = 60;
         for (int step = 0; step <= samples; ++step) {
@@ -347,8 +324,8 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
                 distance = r.horizontalDistance;
             }
 
-            // Висота в конкретний момент часу потрібна тільки для візуалізації,
-            // тому тут повторно використовуються вже відомі коефіцієнти моделі.
+            // Тут ще раз рахуємо висоту для конкретного кроку.
+            // Так, формула довга, але зате не треба городити зайві змінні вище.
             double z = calcAltitude(t, r.zd, r.ammo.d * G * r.ammo.m - 2.0 * r.ammo.d * r.ammo.d * r.ammo.l * r.attackSpeed,
                                     -3.0 * G * r.ammo.m * r.ammo.m + 3.0 * r.ammo.d * r.ammo.l * r.ammo.m * r.attackSpeed,
                                     r.ammo.m);
@@ -372,9 +349,8 @@ void writeTrajectorySvg(const std::vector<CaseResult>& results) {
 }
 
 int main() {
-    // Вхідні дані читаємо з input.txt,
-    // основні результати зберігаємо у output.txt,
-    // а детальний звіт - у report.txt.
+    // Читаємо вхід з `input.txt`.
+    // Коротку відповідь кидаємо в `output.txt`, подробиці - в `report.txt`.
     std::ifstream fin("input.txt");
     std::ofstream fout("output.txt");
     std::ofstream freport("report.txt");
@@ -397,7 +373,7 @@ int main() {
     std::cout << "Program started\n";
     std::cout << "Reading data from input.txt\n";
 
-    // Змінні для поточного набору вхідних даних.
+    // Змінні під один поточний кейс.
     double xd, yd, zd;
     double targetX, targetY;
     double attackSpeed;
@@ -405,12 +381,11 @@ int main() {
     char ammo_name[64];
     int caseNumber = 0;
 
-    // У цей вектор складаємо всі обчислені кейси,
-    // щоб після завершення розрахунків побудувати спільну візуалізацію.
+    // Сюди копимо всі кейси, потім по них одним махом малюємо SVG.
     std::vector<CaseResult> results;
 
-    // Програма читає одразу багато наборів даних з одного файлу.
-    // Кожні 8 значень утворюють окремий кейс.
+    // У файлі може бути кілька наборів підряд.
+    // Кожні 8 значень - це один кейс, нічого хитрого.
     while (fin >> xd >> yd >> zd
                >> targetX >> targetY
                >> attackSpeed
@@ -424,7 +399,7 @@ int main() {
         std::cout << "Acceleration path: " << accelerationPath << '\n';
         std::cout << "Ammo: " << ammo_name << '\n';
 
-        // Підтягуємо характеристики боєприпасу з таблиці.
+        // Підтягуємо параметри вибраного боєприпасу.
         AmmoInfo ammo;
         if (!getAmmoInfo(ammo_name, ammo)) {
             std::cout << "Error: unknown ammo type\n";
@@ -437,7 +412,7 @@ int main() {
                   << ", d=" << ammo.d
                   << ", l=" << ammo.l << '\n';
 
-        // Коефіцієнти кубічного рівняння для обчислення часу польоту.
+        // Коефіцієнти для рівняння часу польоту.
         double a = ammo.d * G * ammo.m - 2.0 * ammo.d * ammo.d * ammo.l * attackSpeed;
         double b = -3.0 * G * ammo.m * ammo.m + 3.0 * ammo.d * ammo.l * ammo.m * attackSpeed;
         double c = 6.0 * ammo.m * ammo.m * zd;
@@ -455,7 +430,7 @@ int main() {
             return 1;
         }
 
-        // Горизонтальна дистанція, яку пройде боєприпас за час t.
+        // Скільки по горизонталі встигне пролетіти за знайдений час.
         std::cout << "Time of flight: " << t << '\n';
 
         double h = calcHorizontalDistance(t, ammo.m, ammo.d, ammo.l, attackSpeed);
@@ -468,7 +443,7 @@ int main() {
 
         std::cout << "Horizontal distance: " << h << '\n';
 
-        // Геометрична відстань від поточної позиції дрона до цілі.
+        // Звичайна дистанція від дрона до цілі по площині.
         double dx = targetX - xd;
         double dy = targetY - yd;
         double D = std::sqrt(dx * dx + dy * dy);
@@ -484,8 +459,7 @@ int main() {
         double intermediateX = xd;
         double intermediateY = yd;
 
-        // Якщо сумарна потрібна відстань більша за поточну дистанцію до цілі,
-        // дрону спершу треба відлетіти далі від цілі.
+        // Якщо місця для розгону + скиду не вистачає, дрону треба спочатку відійти назад.
         bool needManeuver = (h + accelerationPath > D);
 
         std::cout << "Checking maneuver: h + accelerationPath = "
@@ -499,9 +473,8 @@ int main() {
                       << ", y=" << intermediateY << '\n';
         }
 
-        // Після маневру точка початку атаки змінюється:
-        // якщо маневр був потрібен, дрон починає атаку з intermediate point.
-        // Саме від цієї точки далі треба рахувати координати скиду.
+        // Після маневру вважаємо, що атака стартує вже з нової точки.
+        // Від неї і шукаємо, де саме має бути скид.
         double attackStartX = intermediateX;
         double attackStartY = intermediateY;
         double attackDx = targetX - attackStartX;
@@ -514,8 +487,7 @@ int main() {
             return 1;
         }
 
-        // ratio показує, яку частку від відстані до цілі треба пройти
-        // від поточної точки початку атаки до точки скиду.
+        // `ratio` показує частку шляху від старту атаки до точки скиду.
         double ratio = 0.0;
         double fireX = attackStartX;
         double fireY = attackStartY;
@@ -528,7 +500,7 @@ int main() {
         std::cout << "Drop point: x=" << fireX << ", y=" << fireY << '\n';
         std::cout << "Case " << caseNumber << " completed\n";
 
-        // Зберігаємо повний результат кейсу для побудови візуалізації.
+        // Зберігаємо все, що нарахували, шоб потім намалювати і не рахувати по новій.
         CaseResult result;
         result.caseNumber = caseNumber;
         result.xd = xd;
@@ -551,10 +523,10 @@ int main() {
         result.fireY = fireY;
         results.push_back(result);
 
-        // У output.txt записуємо тільки координати точки скиду.
+        // В `output.txt` пишемо тільки відповідь по суті.
         fout << fireX << ' ' << fireY << '\n';
 
-        // У report.txt записуємо повний детальний звіт по кейсу.
+        // А в `report.txt` вже складаємо весь детальний розклад.
         freport << "Case " << caseNumber << '\n';
         freport << "ammoName = " << ammo_name << '\n';
         freport << "timeOfFlight = " << t << '\n';
@@ -576,7 +548,7 @@ int main() {
         return 1;
     }
 
-    // Після обробки всіх кейсів формуємо файл з візуалізацією траєкторій.
+    // В кінці добиваємо візуалізацію, раз уже всі кейси є.
     std::cout << "\nAll cases processed successfully\n";
     std::cout << "Results written to output.txt\n";
     std::cout << "Detailed report written to report.txt\n";
