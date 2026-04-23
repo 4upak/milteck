@@ -7,7 +7,7 @@
   "initialDir": 0.0,
   "attackSpeed": 30.0,
   "accelPath": 50.0,
-  "ammoName": "VOG-17",
+  "ammoName": "M67",
   "arrayTimeStep": 1.0,
   "simTimeStep": 0.1,
   "hitRadius": 2.0,
