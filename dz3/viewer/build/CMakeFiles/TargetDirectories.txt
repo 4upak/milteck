@@ -1,0 +1,3 @@
+/Users/anna/miltech/dz3/viewer/build/CMakeFiles/drone_viewer.dir
+/Users/anna/miltech/dz3/viewer/build/CMakeFiles/edit_cache.dir
+/Users/anna/miltech/dz3/viewer/build/CMakeFiles/rebuild_cache.dir
