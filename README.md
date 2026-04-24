@@ -1,121 +1,143 @@
 # milteck
-DZ3: запуск симуляції та візуалізації
 
-Структура вхідних/вихідних файлів
-- config.json      - параметри дрона та симуляції
-- ammo.json        - список боєприпасів
-- targets.json     - координати цілей у часі
-- simulation.json  - результат роботи симуляції
+## DZ3: запуск симуляции и визуализации
 
-Порядок запуску
-1. Спочатку запустити симуляцію (`main.cpp` / `drone_sim`) - вона створює `simulation.json`
-2. Потім запустити viewer - він читає `config.json`, `ammo.json`, `targets.json`, `simulation.json`
+`dz3` состоит из двух частей:
 
+1. `drone_sim` запускает симуляцию и генерирует JSON-файлы с результатами.
+2. `viewer` читает эти файлы и показывает полет дрона и траектории боеприпасов.
 
-====================
-macOS
-====================
+## Какие файлы используются
 
-1. Збирання симуляції:
+Входные файлы в `dz3`:
+
+- `config.json` - параметры дрона и симуляции
+- `ammo.json` - список типов боеприпасов
+- `targets.json` - траектории целей по времени
+
+Выходные файлы после запуска симуляции:
+
+- `simulation_<ammo>.json` - результат симуляции для каждого типа боеприпаса
+- `projectile_<ammo>.json` - траектория сброшенного боеприпаса для каждого типа
+
+Например: `simulation_vog_17.json`, `simulation_gliding_vog.json`, `projectile_rkg_3.json`.
+
+## Быстрый запуск
+
+Самый простой способ запустить `dz3`:
+
+```bash
+cd dz3
+./run_all.sh
+```
+
+Скрипт автоматически:
+
+- собирает `drone_sim`
+- удаляет старые сгенерированные `simulation_*.json` и `projectile_*.json`
+- запускает симуляцию для всех типов боеприпасов из `ammo.json`
+- настраивает и собирает `viewer`
+- запускает `viewer`
+
+Если нужно только пересобрать и прогнать симуляцию без открытия окна визуализации:
+
+```bash
+cd dz3
+DRONE_SKIP_VIEWER=1 ./run_all.sh
+```
+
+## Ручной запуск
+
+### macOS
+
+Для `viewer` нужен `raylib`. Обычно установка выглядит так:
+
+```bash
+brew install raylib
+```
+
+Дальше запуск по шагам:
+
+```bash
 cd dz3
 make
-
-2. Запуск симуляції:
 ./drone_sim
+cmake -S viewer -B viewer/build
+cmake --build viewer/build
+./viewer/build/drone_viewer .
+```
 
-3. Збирання viewer:
-cd viewer
-mkdir -p build
-cd build
-cmake ..
-cmake --build .
+### Linux
 
-4. Запуск viewer:
-./drone_viewer ../..
+Нужны:
 
-Примітка:
-- Для viewer має бути встановлений `raylib`
-- На macOS це зазвичай робиться через Homebrew:
-  brew install raylib
+- C++ compiler
+- `cmake`
+- `raylib`
 
+Например, на Ubuntu/Debian:
 
-====================
-Linux
-====================
-
-1. Встановити залежності:
-- компілятор C++
-- CMake
-- raylib
-
-Наприклад, на Ubuntu/Debian:
+```bash
 sudo apt update
 sudo apt install build-essential cmake libraylib-dev
+```
 
-2. Збирання симуляції:
+После установки зависимостей:
+
+```bash
 cd dz3
 make
-
-3. Запуск симуляції:
 ./drone_sim
+cmake -S viewer -B viewer/build
+cmake --build viewer/build
+./viewer/build/drone_viewer .
+```
 
-4. Збирання viewer:
-cd viewer
-mkdir -p build
-cd build
-cmake ..
-cmake --build .
+### Windows
 
-5. Запуск viewer:
-./drone_viewer ../..
+Подойдет связка Visual Studio + CMake.
 
+Нужно установить:
 
-====================
-Windows
-====================
+- Visual Studio с workload `Desktop development with C++`
+- `CMake`
+- `raylib`
 
-Visual Studio + CMake
+Дальше можно:
 
-1. Встановити:
-- Visual Studio з Desktop development with C++
-- CMake
-- raylib
+1. Собрать симулятор в `dz3`.
+2. Открыть `dz3/viewer` как CMake-проект.
+3. Собрать `drone_viewer`.
+4. Запустить `drone_viewer`, передав ему путь к папке `dz3` как аргумент.
 
-2. Симуляцію можна зібрати так:
-cd dz3
-cl /EHsc /std:c++17 main.cpp
+## Как работает viewer
 
-або відкрити проєкт в IDE і зібрати вручну
+`viewer` читает:
 
-3. Viewer:
-- відкрити `dz3/viewer` у Visual Studio як CMake-проєкт
-- зібрати проєкт `drone_viewer`
-- запускати з аргументом:
-  ..\..
+- `targets.json`
+- все файлы вида `simulation_*.json`
+- соответствующие файлы `projectile_*.json`
 
+То есть после запуска `drone_sim` визуализатор автоматически подхватывает результаты для всех боеприпасов, которые есть в `ammo.json`.
 
-====================
-Керування viewer
-====================
+## Управление viewer
 
-- Space - play/pause
-- Left / Right - крок назад / вперед
-- Shift + Left / Right - швидке перемотування
-- Up / Down - змінити швидкість відтворення
-- 0 - повернути швидкість x1
-- Home / End - початок / кінець
-- RMB drag - обертання камери
-- MMB drag - панорамування
-- Wheel - zoom
-- Q / E - повернути камеру вліво / вправо
-- Z / C - нахилити камеру вниз / вгору
-- P - перспективний вид
-- T - вид зверху
+- `Space` - play/pause
+- `Left` / `Right` - шаг назад / вперед
+- `Shift + Left` / `Shift + Right` - быстрая перемотка
+- `Up` / `Down` - изменить скорость воспроизведения
+- `0` - вернуть скорость `x1`
+- `Home` / `End` - начало / конец
+- `RMB drag` - вращение камеры
+- `MMB drag` - панорамирование
+- `Wheel` - zoom
+- `Q` / `E` - повернуть камеру влево / вправо
+- `Z` / `C` - наклонить камеру вниз / вверх
+- `P` - перспективный вид
+- `T` - вид сверху
 
+## Важно
 
-====================
-Важливо
-====================
-
-- Viewer не створює `simulation.json`, він лише читає його
-- Якщо ви змінили `config.json`, `ammo.json` або `targets.json`, спочатку знову запустіть `drone_sim`
+- `viewer` не запускает симуляцию и не генерирует JSON сам
+- если вы изменили `config.json`, `ammo.json` или `targets.json`, сначала снова запустите `drone_sim`
+- текущая версия `dz3` создает отдельные файлы симуляции и траектории для каждого типа боеприпаса, а не один общий `simulation.json`

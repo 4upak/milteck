@@ -18,6 +18,13 @@ struct AmmoInfo {
     double l;
 };
 
+struct TrajectoryPoint {
+    double t;
+    double x;
+    double y;
+    double z;
+};
+
 // Сюди складаємо все, що нарахували по одному кейсу.
 // Потім це йде і в `output/report`, і в SVG, шоб двічі не перераховувати.
 struct CaseResult {
@@ -40,6 +47,7 @@ struct CaseResult {
     double ratio;                 // Пропорція для обчислення точки скиду відносно цілі
     double fireX;                 // X-координата точки скиду боєприпасу
     double fireY;                 // Y-координата точки скиду боєприпасу
+    std::vector<TrajectoryPoint> projectilePath;
 };
 
 // Шукаємо потрібний тип боєприпасу в табличці.
@@ -151,6 +159,110 @@ double calcAltitude(double t, double z0, double a, double b, double m) {
         z = 0.0;
     }
     return z;
+}
+
+std::vector<TrajectoryPoint> buildProjectilePath(double fireX, double fireY,
+                                                 double targetX, double targetY,
+                                                 double z0, double timeOfFlight,
+                                                 double horizontalDistance,
+                                                 const AmmoInfo& ammo,
+                                                 double attackSpeed) {
+    std::vector<TrajectoryPoint> path;
+    const int samples = 64;
+
+    double dirX = targetX - fireX;
+    double dirY = targetY - fireY;
+    double dirLen = std::sqrt(dirX * dirX + dirY * dirY);
+    if (dirLen <= EPS || horizontalDistance <= EPS || timeOfFlight <= EPS) {
+        return path;
+    }
+
+    double a = ammo.d * G * ammo.m - 2.0 * ammo.d * ammo.d * ammo.l * attackSpeed;
+    double b = -3.0 * G * ammo.m * ammo.m + 3.0 * ammo.d * ammo.l * ammo.m * attackSpeed;
+
+    path.reserve(samples + 1);
+    for (int step = 0; step <= samples; ++step) {
+        double t = timeOfFlight * static_cast<double>(step) / static_cast<double>(samples);
+        double distance = calcHorizontalDistance(t, ammo.m, ammo.d, ammo.l, attackSpeed);
+        if (distance < 0.0) {
+            distance = 0.0;
+        }
+        if (distance > horizontalDistance) {
+            distance = horizontalDistance;
+        }
+
+        double ratio = distance / horizontalDistance;
+        double z = calcAltitude(t, z0, a, b, ammo.m);
+
+        TrajectoryPoint point;
+        point.t = t;
+        point.x = fireX + dirX * ratio;
+        point.y = fireY + dirY * ratio;
+        point.z = z;
+        path.push_back(point);
+    }
+
+    return path;
+}
+
+std::string escapeJson(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for (size_t i = 0; i < value.size(); ++i) {
+        char ch = value[i];
+        if (ch == '\\' || ch == '"') {
+            escaped.push_back('\\');
+        }
+        escaped.push_back(ch);
+    }
+
+    return escaped;
+}
+
+void writeProjectileTrajectoryFile(const std::vector<CaseResult>& results) {
+    std::ofstream trajFile("projectile_trajectory.json");
+    if (!trajFile.is_open()) {
+        std::cout << "Warning: cannot create projectile_trajectory.json\n";
+        return;
+    }
+
+    trajFile << "{\n";
+    trajFile << "  \"cases\": [\n";
+    for (size_t i = 0; i < results.size(); ++i) {
+        const CaseResult& r = results[i];
+        trajFile << "    {\n";
+        trajFile << "      \"caseNumber\": " << r.caseNumber << ",\n";
+        trajFile << "      \"ammoName\": \"" << escapeJson(r.ammoName) << "\",\n";
+        trajFile << "      \"dropPoint\": {\"x\": " << r.fireX << ", \"y\": " << r.fireY << ", \"z\": " << r.zd << "},\n";
+        trajFile << "      \"targetPoint\": {\"x\": " << r.targetX << ", \"y\": " << r.targetY << ", \"z\": 0},\n";
+        trajFile << "      \"timeOfFlight\": " << r.timeOfFlight << ",\n";
+        trajFile << "      \"horizontalDistance\": " << r.horizontalDistance << ",\n";
+        trajFile << "      \"points\": [\n";
+
+        for (size_t j = 0; j < r.projectilePath.size(); ++j) {
+            const TrajectoryPoint& point = r.projectilePath[j];
+            trajFile << "        {\"t\": " << point.t
+                     << ", \"x\": " << point.x
+                     << ", \"y\": " << point.y
+                     << ", \"z\": " << point.z << "}";
+            if (j + 1 < r.projectilePath.size()) {
+                trajFile << ',';
+            }
+            trajFile << '\n';
+        }
+
+        trajFile << "      ]\n";
+        trajFile << "    }";
+        if (i + 1 < results.size()) {
+            trajFile << ',';
+        }
+        trajFile << '\n';
+    }
+    trajFile << "  ]\n";
+    trajFile << "}\n";
+
+    std::cout << "Projectile trajectory written to projectile_trajectory.json\n";
 }
 
 // Пишемо шапку SVG: розміри, фон, стилі. Тут без магії.
@@ -521,6 +633,8 @@ int main() {
         result.ratio = ratio;
         result.fireX = fireX;
         result.fireY = fireY;
+        result.projectilePath = buildProjectilePath(fireX, fireY, targetX, targetY,
+                                                    zd, t, h, ammo, attackSpeed);
         results.push_back(result);
 
         // В `output.txt` пишемо тільки відповідь по суті.
@@ -552,6 +666,7 @@ int main() {
     std::cout << "\nAll cases processed successfully\n";
     std::cout << "Results written to output.txt\n";
     std::cout << "Detailed report written to report.txt\n";
+    writeProjectileTrajectoryFile(results);
     writeTrajectorySvg(results);
 
     return 0;
