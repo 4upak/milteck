@@ -1,11 +1,12 @@
 // 3D-візуалізатор симуляції дрона з dz3.
-// Читає config.json, ammo.json, targets.json, simulation.json і малює сцену через raylib.
+// Читає готові дані з файлів симуляції і малює сцену через raylib.
 
 #define _USE_MATH_DEFINES
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -17,19 +18,9 @@
 
 using nlohmann::json;
 
-static const double G = 9.81;
-static const double EPS = 1e-9;
-
 struct Coord {
     float x = 0.0f;
     float y = 0.0f;
-};
-
-struct AmmoEntry {
-    std::string name;
-    double mass = 0.0;
-    double drag = 0.0;
-    double lift = 0.0;
 };
 
 struct StepData {
@@ -42,7 +33,15 @@ struct StepData {
     Coord predictedTarget;
 };
 
-struct SimData {
+struct TargetsData {
+    int targetCount = 0;
+    int timeSteps = 0;
+    float arrayTimeStep = 1.0f;
+    float hitRadius = 2.0f;
+    std::vector<std::vector<Coord>> targets;
+};
+
+struct FlightData {
     Coord startPos;
     float altitude = 120.0f;
     float initialDir = 0.0f;
@@ -59,12 +58,8 @@ struct SimData {
     double bombD = 0.0;
     double bombL = 0.0;
 
-    int targetCount = 0;
-    int timeSteps = 0;
     int stepCount = 0;
     bool dropped = false;
-
-    std::vector<std::vector<Coord>> targets;
     std::vector<StepData> steps;
 
     int dropStepIdx = -1;
@@ -72,8 +67,48 @@ struct SimData {
     double dropOriginY = 0.0;
     double dropDir = 0.0;
     double dropTOfFlight = 0.0;
+    Coord targetPoint = {0.0f, 0.0f};
+    double missDistance = -1.0;
     std::vector<Vector3> projectilePath;
+    std::vector<float> projectileTimes;
+    std::string projectileSource = "projectile.json";
+    std::string fileSlug;
 };
+
+struct FlightPaths {
+    std::string slug;
+    std::string simulationPath;
+    std::string projectilePath;
+};
+
+struct ActiveFlightState {
+    int idx = 0;
+    int idxNext = 0;
+    float wx = 0.0f;
+    float wy = 0.0f;
+    float direction = 0.0f;
+    int state = 0;
+    int targetIdx = -1;
+    bool projectileActive = false;
+    Vector3 projectilePos = {0.0f, 0.0f, 0.0f};
+};
+
+static inline Vector3 toRl(float wx, float wy, float wh);
+
+static std::string ammoNameFromSlug(const std::string &slug) {
+    std::string name;
+    for (size_t i = 0; i < slug.size(); i++) {
+        char ch = slug[i];
+        if (ch == '_') {
+            name.push_back('-');
+        } else if (ch >= 'a' && ch <= 'z') {
+            name.push_back((char)(ch - 'a' + 'A'));
+        } else {
+            name.push_back(ch);
+        }
+    }
+    return name;
+}
 
 static bool loadJson(const std::string &path, json &j) {
     std::ifstream f(path);
@@ -93,85 +128,184 @@ static bool readCoord(const json &j, Coord &c) {
     return true;
 }
 
-static bool loadAmmo(const std::string &path, std::vector<AmmoEntry> &ammo) {
-    json j;
-    if (!loadJson(path, j) || !j.is_array()) return false;
-    ammo.clear();
-    for (const auto &item : j) {
-        AmmoEntry a;
-        a.name = item.at("name").get<std::string>();
-        a.mass = item.at("mass").get<double>();
-        a.drag = item.at("drag").get<double>();
-        a.lift = item.at("lift").get<double>();
-        ammo.push_back(a);
-    }
-    return !ammo.empty();
-}
-
-static bool loadTargets(const std::string &path, SimData &d) {
+static bool loadTargets(const std::string &path, TargetsData &d) {
     json j;
     if (!loadJson(path, j)) return false;
     if (!j.contains("targets") || !j.at("targets").is_array() || j.at("targets").empty()) return false;
 
-    d.targetCount = (int)j.at("targets").size();
-    d.timeSteps = (int)j.at("targets").at(0).size();
+    const auto &targets = j.at("targets");
+    if (j.contains("targetCount") && j.contains("timeSteps")) {
+        d.targetCount = j.at("targetCount").get<int>();
+        d.timeSteps = j.at("timeSteps").get<int>();
+    } else {
+        d.targetCount = (int)targets.size();
+        d.timeSteps = (int)targets.at(0).size();
+    }
+    if (d.targetCount <= 0 || d.timeSteps <= 0) return false;
+    if ((int)targets.size() != d.targetCount) return false;
+
     d.targets.assign(d.targetCount, std::vector<Coord>(d.timeSteps));
 
     for (int i = 0; i < d.targetCount; i++) {
-        const auto &series = j.at("targets").at(i);
-        if (!series.is_array() || (int)series.size() != d.timeSteps) return false;
+        const auto &targetNode = targets.at(i);
+        const auto *series = &targetNode;
+        if (targetNode.is_object()) {
+            if (!targetNode.contains("positions") || !targetNode.at("positions").is_array()) return false;
+            series = &targetNode.at("positions");
+        }
+        if (!series->is_array() || (int)series->size() != d.timeSteps) return false;
         for (int k = 0; k < d.timeSteps; k++) {
-            if (!readCoord(series.at(k), d.targets[i][k])) return false;
+            if (!readCoord(series->at(k), d.targets[i][k])) return false;
         }
     }
     return true;
 }
 
-static bool loadSimulation(const std::string &path, SimData &d) {
+static bool loadSimulation(const std::string &path, FlightData &d) {
     json j;
     if (!loadJson(path, j)) return false;
 
-    const auto &cfg = j.at("config");
-    if (!readCoord(cfg.at("startPos"), d.startPos)) return false;
-    d.altitude = cfg.at("altitude").get<float>();
-    d.initialDir = cfg.at("initialDir").get<float>();
-    d.attackSpeed = cfg.at("attackSpeed").get<float>();
-    d.accelPath = cfg.at("accelPath").get<float>();
-    d.ammoName = cfg.at("ammoName").get<std::string>();
-    d.arrayTimeStep = cfg.at("arrayTimeStep").get<float>();
-    d.simTimeStep = cfg.at("simTimeStep").get<float>();
-    d.hitRadius = cfg.at("hitRadius").get<float>();
-    d.angularSpeed = cfg.at("angularSpeed").get<float>();
-    d.turnThreshold = cfg.at("turnThreshold").get<float>();
-
-    const auto &summary = j.at("summary");
-    d.stepCount = summary.at("stepCount").get<int>();
-    d.dropped = summary.at("dropped").get<bool>();
-
     const auto &steps = j.at("steps");
-    if (!steps.is_array() || (int)steps.size() != d.stepCount) return false;
+    if (!steps.is_array()) return false;
+
+    if (j.contains("config") && j.at("config").is_object()) {
+        const auto &cfg = j.at("config");
+        if (!readCoord(cfg.at("startPos"), d.startPos)) return false;
+        d.altitude = cfg.at("altitude").get<float>();
+        d.initialDir = cfg.at("initialDir").get<float>();
+        d.attackSpeed = cfg.at("attackSpeed").get<float>();
+        d.accelPath = cfg.at("accelPath").get<float>();
+        d.ammoName = cfg.at("ammoName").get<std::string>();
+        d.bombM = cfg.value("ammoMass", 0.0);
+        d.bombD = cfg.value("ammoDrag", 0.0);
+        d.bombL = cfg.value("ammoLift", 0.0);
+        d.arrayTimeStep = cfg.at("arrayTimeStep").get<float>();
+        d.simTimeStep = cfg.at("simTimeStep").get<float>();
+        d.hitRadius = cfg.at("hitRadius").get<float>();
+        d.angularSpeed = cfg.at("angularSpeed").get<float>();
+        d.turnThreshold = cfg.at("turnThreshold").get<float>();
+    }
+
+    if (j.contains("summary") && j.at("summary").is_object()) {
+        const auto &summary = j.at("summary");
+        d.stepCount = summary.at("stepCount").get<int>();
+        d.dropped = summary.at("dropped").get<bool>();
+    } else {
+        d.stepCount = j.value("totalSteps", (int)steps.size());
+        d.dropped = false;
+    }
+
+    if ((int)steps.size() != d.stepCount) return false;
 
     d.steps.clear();
     d.steps.reserve(d.stepCount);
     for (const auto &item : steps) {
         StepData s;
-        if (!readCoord(item.at("pos"), s.pos)) return false;
+        if (item.contains("position")) {
+            if (!readCoord(item.at("position"), s.pos)) return false;
+        } else {
+            if (!readCoord(item.at("pos"), s.pos)) return false;
+        }
         if (!readCoord(item.at("dropPoint"), s.dropPoint)) return false;
         if (!readCoord(item.at("aimPoint"), s.aimPoint)) return false;
         if (!readCoord(item.at("predictedTarget"), s.predictedTarget)) return false;
         s.direction = item.at("direction").get<float>();
         s.state = item.at("state").get<int>();
-        s.targetIdx = item.at("targetIdx").get<int>();
+        if (item.contains("targetIndex")) s.targetIdx = item.at("targetIndex").get<int>();
+        else s.targetIdx = item.at("targetIdx").get<int>();
         d.steps.push_back(s);
     }
+
     return d.stepCount > 0;
 }
 
-static int findAmmo(const std::vector<AmmoEntry> &ammo, const std::string &name) {
-    for (size_t i = 0; i < ammo.size(); i++) {
-        if (ammo[i].name == name) return (int)i;
+static bool loadProjectile(const std::string &path, FlightData &d) {
+    json j;
+    if (!loadJson(path, j)) return false;
+    if (!j.contains("projectile") || !j.at("projectile").is_object()) return false;
+
+    const auto &projectile = j.at("projectile");
+    bool available = projectile.value("available", false);
+
+    d.projectilePath.clear();
+    d.projectileTimes.clear();
+    d.projectileSource = std::filesystem::path(path).filename().string();
+    d.dropStepIdx = projectile.value("dropStepIdx", -1);
+    d.dropTOfFlight = projectile.value("timeOfFlight", 0.0);
+    d.missDistance = -1.0;
+
+    if (projectile.contains("dropOrigin")) {
+        Coord dropOrigin;
+        if (!readCoord(projectile.at("dropOrigin"), dropOrigin)) return false;
+        d.dropOriginX = dropOrigin.x;
+        d.dropOriginY = dropOrigin.y;
     }
-    return -1;
+    if (projectile.contains("targetPoint")) {
+        Coord targetPoint;
+        if (!readCoord(projectile.at("targetPoint"), targetPoint)) return false;
+        d.targetPoint = targetPoint;
+        d.dropDir = std::atan2(targetPoint.y - d.dropOriginY, targetPoint.x - d.dropOriginX);
+    }
+
+    if (!available) {
+        d.dropped = false;
+        d.dropStepIdx = -1;
+        d.dropTOfFlight = 0.0;
+        return true;
+    }
+
+    if (!projectile.contains("points") || !projectile.at("points").is_array()) return false;
+    for (const auto &point : projectile.at("points")) {
+        const auto &pos = point.at("pos");
+        float t = point.at("t").get<float>();
+        float x = pos.at("x").get<float>();
+        float y = pos.at("y").get<float>();
+        float z = pos.at("z").get<float>();
+        d.projectileTimes.push_back(t);
+        d.projectilePath.push_back(toRl(x, y, z));
+    }
+
+    d.dropped = available && !d.projectilePath.empty();
+    return true;
+}
+
+static std::vector<FlightPaths> discoverFlightFiles(const std::string &dir) {
+    namespace fs = std::filesystem;
+
+    std::vector<FlightPaths> files;
+    fs::path baseDir(dir);
+    if (!fs::exists(baseDir) || !fs::is_directory(baseDir)) {
+        return files;
+    }
+
+    for (const auto &entry : fs::directory_iterator(baseDir)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string name = entry.path().filename().string();
+        if (name.rfind("simulation_", 0) != 0 || entry.path().extension() != ".json") continue;
+
+        std::string slug = entry.path().stem().string().substr(std::strlen("simulation_"));
+        fs::path projectilePath = baseDir / ("projectile_" + slug + ".json");
+        files.push_back({slug,
+                         entry.path().string(),
+                         fs::exists(projectilePath) ? projectilePath.string() : std::string()});
+    }
+
+    std::sort(files.begin(), files.end(), [](const FlightPaths &lhs, const FlightPaths &rhs) {
+        return lhs.slug < rhs.slug;
+    });
+
+    if (!files.empty()) return files;
+
+    fs::path singleSimulation = baseDir / "simulation.json";
+    fs::path singleProjectile = baseDir / "projectile.json";
+    if (fs::exists(singleSimulation)) {
+        files.push_back({"single",
+                         singleSimulation.string(),
+                         fs::exists(singleProjectile) ? singleProjectile.string() : std::string()});
+    }
+
+    return files;
 }
 
 static const char *stateName(int s) {
@@ -185,58 +319,7 @@ static const char *stateName(int s) {
     }
 }
 
-static double solveCardanoTime(double a, double b, double c, bool &ok) {
-    ok = false;
-    if (std::fabs(a) < EPS) return 0.0;
-    double p = -(b * b) / (3.0 * a * a);
-    double q = (2.0 * b * b * b) / (27.0 * a * a * a) + c / a;
-    if (p >= 0.0) return 0.0;
-    double acosArg = (3.0 * q / (2.0 * p)) * std::sqrt(-3.0 / p);
-    if (acosArg < -1.0 || acosArg > 1.0) return 0.0;
-    double phi = std::acos(acosArg);
-    double rootBase = 2.0 * std::sqrt(-p / 3.0);
-    double t1 = rootBase * std::cos(phi / 3.0) - b / (3.0 * a);
-    double t2 = rootBase * std::cos((phi + 2.0 * M_PI) / 3.0) - b / (3.0 * a);
-    double t3 = rootBase * std::cos((phi + 4.0 * M_PI) / 3.0) - b / (3.0 * a);
-    if (t3 > EPS) { ok = true; return t3; }
-    if (t2 > EPS) { ok = true; return t2; }
-    if (t1 > EPS) { ok = true; return t1; }
-    return 0.0;
-}
-
-static double calcHorizontalDistance(double t, double m, double d, double l, double V0) {
-    double term1 = V0 * t;
-    double term2 = -(t * t * d * V0) / (2.0 * m);
-    double term3 = (t * t * t * (6.0 * d * G * l * m - 6.0 * d * d * (l * l - 1.0) * V0)) /
-                   (36.0 * m * m);
-    double term4 = (std::pow(t, 4.0) *
-                    (-6.0 * d * d * G * l * (1.0 + l * l + l * l * l * l) * m +
-                     3.0 * d * d * d * l * l * (1.0 + l * l) * V0 +
-                     6.0 * d * d * d * l * l * l * l * (1.0 + l * l) * V0)) /
-                   (36.0 * std::pow(1.0 + l * l, 2.0) * m * m * m);
-    double term5 = (std::pow(t, 5.0) *
-                    (3.0 * d * d * d * G * l * l * l * m -
-                     3.0 * std::pow(d, 4.0) * l * l * (1.0 + l * l) * V0)) /
-                   (36.0 * (1.0 + l * l) * std::pow(m, 4.0));
-    return term1 + term2 + term3 + term4 + term5;
-}
-
-static bool computeBallistics(double zd, double V0, double m, double d, double l,
-                              double &tOfFlight, double &hDist) {
-    double a = d * G * m - 2.0 * d * d * l * V0;
-    double b = -3.0 * G * m * m + 3.0 * d * l * m * V0;
-    double c = 6.0 * m * m * zd;
-    bool ok = false;
-    double t = solveCardanoTime(a, b, c, ok);
-    if (!ok || t <= EPS) return false;
-    double h = calcHorizontalDistance(t, m, d, l, V0);
-    if (h <= EPS) return false;
-    tOfFlight = t;
-    hDist = h;
-    return true;
-}
-
-static Vector2 interpTarget(const SimData &d, int i, double t) {
+static Vector2 interpTarget(const TargetsData &d, int i, double t) {
     double tt = t / d.arrayTimeStep;
     int idx = ((int)std::floor(tt)) % d.timeSteps;
     if (idx < 0) idx += d.timeSteps;
@@ -248,112 +331,38 @@ static Vector2 interpTarget(const SimData &d, int i, double t) {
     return r;
 }
 
-static double estimateDroneTravelTime(double dist, double speed, double attackSpeed, double accel) {
-    if (dist <= 0.0) return 0.0;
-    if (accel <= EPS) return dist / attackSpeed;
-    if (speed >= attackSpeed) return dist / attackSpeed;
-    double distToCruise = (attackSpeed * attackSpeed - speed * speed) / (2.0 * accel);
-    if (distToCruise >= dist) {
-        double disc = speed * speed + 2.0 * accel * dist;
-        if (disc < 0.0) disc = 0.0;
-        return (-speed + std::sqrt(disc)) / accel;
+static bool sampleProjectilePosition(const FlightData &d, double t, Vector3 &out) {
+    if (d.projectilePath.empty()) return false;
+    if (d.projectilePath.size() == 1 || d.projectileTimes.size() != d.projectilePath.size()) {
+        out = d.projectilePath.back();
+        return true;
     }
-    double tAccel = (attackSpeed - speed) / accel;
-    double tCruise = (dist - distToCruise) / attackSpeed;
-    return tAccel + tCruise;
-}
 
-static bool computeDropPointFull(const SimData &d, int tgt, double currentTime,
-                                 double posX, double posY, double droneSpeed,
-                                 double &dropX, double &dropY,
-                                 double &predX, double &predY,
-                                 double &tOfFlight) {
-    Vector2 cur = interpTarget(d, tgt, currentTime);
-    double hDist = 0;
-    if (!computeBallistics(d.altitude, d.attackSpeed, d.bombM, d.bombD, d.bombL, tOfFlight, hDist)) return false;
+    if (t <= d.projectileTimes.front()) {
+        out = d.projectilePath.front();
+        return true;
+    }
+    if (t >= d.projectileTimes.back()) {
+        out = d.projectilePath.back();
+        return true;
+    }
 
-    double dxT = cur.x - posX;
-    double dyT = cur.y - posY;
-    double D = std::sqrt(dxT * dxT + dyT * dyT);
-    if (D < EPS) return false;
+    for (size_t i = 1; i < d.projectileTimes.size(); ++i) {
+        if (t > d.projectileTimes[i]) continue;
 
-    double accel = (double)d.attackSpeed * (double)d.attackSpeed / (2.0 * (double)d.accelPath);
-    double approxDist = std::max(0.0, D - hDist);
-    double approxArrival = estimateDroneTravelTime(approxDist, droneSpeed, d.attackSpeed, accel);
-    double totalTime = approxArrival + tOfFlight;
-
-    Vector2 t1 = interpTarget(d, tgt, currentTime);
-    Vector2 t2 = interpTarget(d, tgt, currentTime + d.simTimeStep);
-    double tvx = (t2.x - t1.x) / d.simTimeStep;
-    double tvy = (t2.y - t1.y) / d.simTimeStep;
-
-    predX = t1.x + tvx * totalTime;
-    predY = t1.y + tvy * totalTime;
-    double pdx = predX - posX;
-    double pdy = predY - posY;
-    double pD = std::sqrt(pdx * pdx + pdy * pdy);
-    if (pD < EPS) return false;
-
-    dropX = predX - pdx * hDist / pD;
-    dropY = predY - pdy * hDist / pD;
-    return true;
-}
-
-static void reconstructDrop(SimData &d) {
-    if (d.stepCount < 2) return;
-
-    auto speedAt = [&](int k) {
-        if (k <= 0) return 0.0;
-        double dx = d.steps[k].pos.x - d.steps[k - 1].pos.x;
-        double dy = d.steps[k].pos.y - d.steps[k - 1].pos.y;
-        return std::sqrt(dx * dx + dy * dy) / d.simTimeStep;
-    };
-
-    for (int step = 0; step < d.stepCount; step++) {
-        int tgt = d.steps[step].targetIdx;
-        if (tgt < 0) continue;
-        double currentTime = step * (double)d.simTimeStep;
-        double ox = d.steps[step].pos.x;
-        double oy = d.steps[step].pos.y;
-        double speed = speedAt(step);
-
-        double dropX, dropY, predX, predY, tOfFlight;
-        if (!computeDropPointFull(d, tgt, currentTime, ox, oy, speed,
-                                  dropX, dropY, predX, predY, tOfFlight)) continue;
-
-        double ddx = dropX - ox;
-        double ddy = dropY - oy;
-        double dropDist = std::sqrt(ddx * ddx + ddy * ddy);
-
-        if (dropDist <= (double)d.hitRadius + 0.01) {
-            d.dropped = true;
-            d.dropStepIdx = step;
-            d.dropOriginX = ox;
-            d.dropOriginY = oy;
-            double dirDx = predX - ox;
-            double dirDy = predY - oy;
-            if (std::sqrt(dirDx * dirDx + dirDy * dirDy) < EPS) d.dropDir = d.steps[step].direction;
-            else d.dropDir = std::atan2(dirDy, dirDx);
-            d.dropTOfFlight = tOfFlight;
-
-            const int SAMPLES = 64;
-            d.projectilePath.clear();
-            d.projectilePath.reserve(SAMPLES + 1);
-            double cosD = std::cos(d.dropDir);
-            double sinD = std::sin(d.dropDir);
-            for (int i = 0; i <= SAMPLES; i++) {
-                double t = tOfFlight * i / SAMPLES;
-                double h = calcHorizontalDistance(t, d.bombM, d.bombD, d.bombL, d.attackSpeed);
-                double px = ox + cosD * h;
-                double py = oy + sinD * h;
-                double nrm = t / tOfFlight;
-                double pz = (double)d.altitude * (1.0 - nrm * nrm);
-                if (pz < 0.0) pz = 0.0;
-                d.projectilePath.push_back({(float)px, (float)pz, (float)py});
-            }
-            return;
+        float t0 = d.projectileTimes[i - 1];
+        float t1 = d.projectileTimes[i];
+        float alpha = 0.0f;
+        if (t1 - t0 > 1e-6f) {
+            alpha = (float)((t - t0) / (t1 - t0));
         }
+
+        out = Vector3Lerp(d.projectilePath[i - 1], d.projectilePath[i], alpha);
+        return true;
     }
+
+    out = d.projectilePath.back();
+    return true;
 }
 
 static inline Vector3 toRl(float wx, float wy, float wh) {
@@ -421,7 +430,7 @@ static void drawTankModel(const Vector3 &pos, float yawRad, Color bodyColor, boo
     rlPopMatrix();
 }
 
-static Color stateColor(int s) {
+[[maybe_unused]] static Color stateColor(int s) {
     switch (s) {
         case 0: return GRAY;
         case 1: return (Color){34, 197, 94, 255};
@@ -446,50 +455,111 @@ static Color targetColor(int i) {
     return cs[i % n];
 }
 
+static Color droneColor(int i) {
+    static const Color cs[] = {
+        (Color){56, 189, 248, 255},
+        (Color){250, 204, 21, 255},
+        (Color){34, 197, 94, 255},
+        (Color){248, 113, 113, 255},
+        (Color){168, 85, 247, 255},
+        (Color){244, 114, 182, 255}
+    };
+    int n = (int)(sizeof(cs) / sizeof(cs[0]));
+    return cs[i % n];
+}
+
 int main(int argc, char **argv) {
     std::string dir = "..";
     if (argc > 1) dir = argv[1];
 
-    SimData sim;
-    std::vector<AmmoEntry> ammo;
-    if (!loadAmmo(dir + "/ammo.json", ammo)) {
-        std::fprintf(stderr, "Cannot load %s/ammo.json\n", dir.c_str());
-        return 1;
-    }
-    if (!loadTargets(dir + "/targets.json", sim)) {
+    TargetsData targets;
+    if (!loadTargets(dir + "/targets.json", targets)) {
         std::fprintf(stderr, "Cannot load %s/targets.json\n", dir.c_str());
         return 1;
     }
-    if (!loadSimulation(dir + "/simulation.json", sim)) {
-        std::fprintf(stderr, "Cannot load %s/simulation.json\n", dir.c_str());
+
+    std::vector<FlightPaths> files = discoverFlightFiles(dir);
+    if (files.empty()) {
+        std::fprintf(stderr, "Cannot find simulation data in %s\n", dir.c_str());
         return 1;
     }
 
-    int ammoIdx = findAmmo(ammo, sim.ammoName);
-    if (ammoIdx < 0) {
-        std::fprintf(stderr, "Unknown ammo %s\n", sim.ammoName.c_str());
+    std::vector<FlightData> flights;
+    flights.reserve(files.size());
+    for (const auto &file : files) {
+        FlightData flight;
+        if (!loadSimulation(file.simulationPath, flight)) {
+            std::fprintf(stderr, "Cannot load %s\n", file.simulationPath.c_str());
+            return 1;
+        }
+        if (!file.projectilePath.empty() && !loadProjectile(file.projectilePath, flight)) {
+            std::fprintf(stderr, "Cannot load %s\n", file.projectilePath.c_str());
+            return 1;
+        }
+        if (file.projectilePath.empty()) {
+            flight.projectilePath.clear();
+            flight.projectileTimes.clear();
+            flight.projectileSource = "not available";
+            flight.dropStepIdx = -1;
+            flight.dropTOfFlight = 0.0;
+            flight.dropped = false;
+        }
+        flight.fileSlug = file.slug;
+        if (flight.ammoName.empty()) {
+            flight.ammoName = ammoNameFromSlug(file.slug);
+        }
+        flights.push_back(flight);
+    }
+
+    if (flights.empty() || flights[0].steps.empty()) {
+        std::fprintf(stderr, "No flight data loaded from %s\n", dir.c_str());
         return 1;
     }
-    sim.bombM = ammo[ammoIdx].mass;
-    sim.bombD = ammo[ammoIdx].drag;
-    sim.bombL = ammo[ammoIdx].lift;
 
-    reconstructDrop(sim);
+    targets.arrayTimeStep = flights[0].arrayTimeStep;
+    targets.hitRadius = flights[0].hitRadius;
 
-    float minX = sim.steps[0].pos.x, maxX = sim.steps[0].pos.x;
-    float minY = sim.steps[0].pos.y, maxY = sim.steps[0].pos.y;
-    for (const auto &step : sim.steps) {
-        minX = std::min(minX, step.pos.x);
-        maxX = std::max(maxX, step.pos.x);
-        minY = std::min(minY, step.pos.y);
-        maxY = std::max(maxY, step.pos.y);
+    for (auto &flight : flights) {
+        flight.missDistance = -1.0;
+        if (!flight.dropped || flight.projectilePath.empty() || flight.dropStepIdx < 0) continue;
+        if (flight.dropStepIdx >= (int)flight.steps.size()) continue;
+        int targetIdx = flight.steps[flight.dropStepIdx].targetIdx;
+        if (targetIdx < 0 || targetIdx >= targets.targetCount) continue;
+
+        double impactTime = flight.dropStepIdx * (double)flight.simTimeStep + flight.dropTOfFlight;
+        Vector2 realTarget = interpTarget(targets, targetIdx, impactTime);
+        const Vector3 &landing = flight.projectilePath.back();
+        flight.missDistance = std::hypot((double)landing.x - (double)realTarget.x,
+                                         (double)landing.z - (double)realTarget.y);
     }
-    for (int t = 0; t < sim.targetCount; t++) {
-        for (int j = 0; j < sim.timeSteps; j++) {
-            minX = std::min(minX, sim.targets[t][j].x);
-            maxX = std::max(maxX, sim.targets[t][j].x);
-            minY = std::min(minY, sim.targets[t][j].y);
-            maxY = std::max(maxY, sim.targets[t][j].y);
+
+    float minX = flights[0].steps[0].pos.x;
+    float maxX = flights[0].steps[0].pos.x;
+    float minY = flights[0].steps[0].pos.y;
+    float maxY = flights[0].steps[0].pos.y;
+    float maxAltitude = flights[0].altitude;
+
+    for (const auto &flight : flights) {
+        maxAltitude = std::max(maxAltitude, flight.altitude);
+        for (const auto &step : flight.steps) {
+            minX = std::min(minX, step.pos.x);
+            maxX = std::max(maxX, step.pos.x);
+            minY = std::min(minY, step.pos.y);
+            maxY = std::max(maxY, step.pos.y);
+        }
+        for (const auto &point : flight.projectilePath) {
+            minX = std::min(minX, point.x);
+            maxX = std::max(maxX, point.x);
+            minY = std::min(minY, point.z);
+            maxY = std::max(maxY, point.z);
+        }
+    }
+    for (int t = 0; t < targets.targetCount; t++) {
+        for (int j = 0; j < targets.timeSteps; j++) {
+            minX = std::min(minX, targets.targets[t][j].x);
+            maxX = std::max(maxX, targets.targets[t][j].x);
+            minY = std::min(minY, targets.targets[t][j].y);
+            maxY = std::max(maxY, targets.targets[t][j].y);
         }
     }
 
@@ -504,14 +574,14 @@ int main(int argc, char **argv) {
 
     Camera3D cam = {};
     cam.position = {cx + worldSize * 0.8f, worldSize * 0.9f, cy + worldSize * 0.8f};
-    cam.target = {cx, sim.altitude * 0.4f, cy};
+    cam.target = {cx, maxAltitude * 0.4f, cy};
     cam.up = {0, 1, 0};
     cam.fovy = 55.0f;
     cam.projection = CAMERA_PERSPECTIVE;
 
     auto setPerspective = [&]() {
         cam.position = {cx + worldSize * 0.8f, worldSize * 0.9f, cy + worldSize * 0.8f};
-        cam.target = {cx, sim.altitude * 0.4f, cy};
+        cam.target = {cx, maxAltitude * 0.4f, cy};
         cam.up = {0, 1, 0};
         cam.fovy = 55.0f;
         cam.projection = CAMERA_PERSPECTIVE;
@@ -540,8 +610,15 @@ int main(int argc, char **argv) {
     double playbackTime = 0.0;
     bool playing = true;
     float speedMul = 1.0f;
-    double totalTime = (sim.stepCount - 1) * (double)sim.simTimeStep;
-    if (sim.dropped) totalTime += sim.dropTOfFlight;
+    double totalTime = 0.0;
+    double minSimTimeStep = flights[0].simTimeStep;
+    for (const auto &flight : flights) {
+        double flightTime = (flight.stepCount - 1) * (double)flight.simTimeStep;
+        if (flight.dropped) flightTime += flight.dropTOfFlight;
+        if (flightTime > totalTime) totalTime = flightTime;
+        if (flight.simTimeStep < minSimTimeStep) minSimTimeStep = flight.simTimeStep;
+    }
+    if (totalTime <= 0.0) totalTime = 1.0;
 
     while (!WindowShouldClose()) {
         float dt = GetFrameTime();
@@ -580,10 +657,10 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_SPACE)) playing = !playing;
         if (IsKeyPressed(KEY_HOME)) { playbackTime = 0.0; playing = false; }
         if (IsKeyPressed(KEY_END))  { playbackTime = totalTime; playing = false; }
-        if (IsKeyPressed(KEY_LEFT)) { playbackTime -= sim.simTimeStep; playing = false; }
-        if (IsKeyPressed(KEY_RIGHT)) { playbackTime += sim.simTimeStep; playing = false; }
-        if (IsKeyDown(KEY_LEFT_SHIFT) && IsKeyDown(KEY_LEFT))  playbackTime -= sim.simTimeStep * 5 * dt * 60;
-        if (IsKeyDown(KEY_LEFT_SHIFT) && IsKeyDown(KEY_RIGHT)) playbackTime += sim.simTimeStep * 5 * dt * 60;
+        if (IsKeyPressed(KEY_LEFT)) { playbackTime -= minSimTimeStep; playing = false; }
+        if (IsKeyPressed(KEY_RIGHT)) { playbackTime += minSimTimeStep; playing = false; }
+        if (IsKeyDown(KEY_LEFT_SHIFT) && IsKeyDown(KEY_LEFT))  playbackTime -= minSimTimeStep * 5 * dt * 60;
+        if (IsKeyDown(KEY_LEFT_SHIFT) && IsKeyDown(KEY_RIGHT)) playbackTime += minSimTimeStep * 5 * dt * 60;
         if (IsKeyPressed(KEY_UP))   speedMul = std::min(8.0f, speedMul * 2.0f);
         if (IsKeyPressed(KEY_DOWN)) speedMul = std::max(0.125f, speedMul * 0.5f);
         if (IsKeyPressed(KEY_ZERO)) speedMul = 1.0f;
@@ -598,39 +675,39 @@ int main(int argc, char **argv) {
         if (playbackTime < 0) playbackTime = 0;
         if (playbackTime > totalTime) playbackTime = totalTime;
 
-        double droneMaxT = (double)(sim.stepCount - 1) * sim.simTimeStep;
-        double simT = std::min(playbackTime, droneMaxT);
-        double sf = simT / sim.simTimeStep;
-        int idx = (int)std::floor(sf);
-        if (idx >= sim.stepCount - 1) idx = sim.stepCount - 1;
-        if (idx < 0) idx = 0;
-        int idxNext = std::min(idx + 1, sim.stepCount - 1);
-        double frac = sf - idx;
+        std::vector<ActiveFlightState> activeFlights(flights.size());
+        for (size_t i = 0; i < flights.size(); i++) {
+            const FlightData &flight = flights[i];
+            ActiveFlightState state;
 
-        float droneWx = sim.steps[idx].pos.x + (sim.steps[idxNext].pos.x - sim.steps[idx].pos.x) * (float)frac;
-        float droneWy = sim.steps[idx].pos.y + (sim.steps[idxNext].pos.y - sim.steps[idx].pos.y) * (float)frac;
-        float droneD = sim.steps[idx].direction;
-        int droneSt = sim.steps[idx].state;
-        int droneTg = sim.steps[idx].targetIdx;
+            double droneMaxT = (double)(flight.stepCount - 1) * flight.simTimeStep;
+            double simT = std::min(playbackTime, droneMaxT);
+            double sf = simT / flight.simTimeStep;
+            int idx = (int)std::floor(sf);
+            if (idx >= flight.stepCount - 1) idx = flight.stepCount - 1;
+            if (idx < 0) idx = 0;
+            int idxNext = std::min(idx + 1, flight.stepCount - 1);
+            double frac = sf - idx;
 
-        bool projActive = false;
-        Vector3 projPos = {0, 0, 0};
-        if (sim.dropped) {
-            double dropStart = sim.dropStepIdx * (double)sim.simTimeStep;
-            double tFly = playbackTime - dropStart;
-            if (tFly >= 0 && tFly <= sim.dropTOfFlight) {
-                projActive = true;
-                double nrm = tFly / sim.dropTOfFlight;
-                double hDist = calcHorizontalDistance(tFly, sim.bombM, sim.bombD, sim.bombL, sim.attackSpeed);
-                double px = sim.dropOriginX + std::cos(sim.dropDir) * hDist;
-                double py = sim.dropOriginY + std::sin(sim.dropDir) * hDist;
-                double pz = (double)sim.altitude * (1.0 - nrm * nrm);
-                if (pz < 0) pz = 0;
-                projPos = toRl((float)px, (float)py, (float)pz);
-            } else if (tFly > sim.dropTOfFlight && !sim.projectilePath.empty()) {
-                projActive = true;
-                projPos = sim.projectilePath.back();
+            state.idx = idx;
+            state.idxNext = idxNext;
+            state.wx = flight.steps[idx].pos.x + (flight.steps[idxNext].pos.x - flight.steps[idx].pos.x) * (float)frac;
+            state.wy = flight.steps[idx].pos.y + (flight.steps[idxNext].pos.y - flight.steps[idx].pos.y) * (float)frac;
+            state.direction = flight.steps[idx].direction;
+            state.state = flight.steps[idx].state;
+            state.targetIdx = flight.steps[idx].targetIdx;
+
+            if (flight.dropped) {
+                double dropStart = flight.dropStepIdx * (double)flight.simTimeStep;
+                double tFly = playbackTime - dropStart;
+                if (tFly >= 0 && tFly <= flight.dropTOfFlight) {
+                    state.projectileActive = sampleProjectilePosition(flight, tFly, state.projectilePos);
+                } else if (tFly > flight.dropTOfFlight && !flight.projectilePath.empty()) {
+                    state.projectileActive = true;
+                    state.projectilePos = flight.projectilePath.back();
+                }
             }
+            activeFlights[i] = state;
         }
 
         BeginDrawing();
@@ -639,87 +716,119 @@ int main(int argc, char **argv) {
 
         float gridSize = worldSize * 3.0f;
         DrawPlane({cx, 0, cy}, {gridSize, gridSize}, (Color){30, 41, 59, 255});
-        rlPushMatrix();
-        rlTranslatef(cx, 0.01f, cy);
-        DrawGrid((int)(gridSize / 10.0f), 10.0f);
-        rlPopMatrix();
 
-        float axisLen = worldSize * 0.4f;
-        DrawLine3D({cx, 0.1f, cy}, {cx + axisLen, 0.1f, cy}, (Color){239, 68, 68, 255});
-        DrawLine3D({cx, 0.1f, cy}, {cx, 0.1f, cy + axisLen}, (Color){59, 130, 246, 255});
-        DrawLine3D({cx, 0.1f, cy}, {cx, axisLen * 0.5f, cy}, (Color){34, 197, 94, 255});
-
-        double pathStep = sim.simTimeStep;
+        double pathStep = minSimTimeStep;
         int pathSamples = std::max(2, (int)std::ceil(playbackTime / pathStep) + 1);
-        for (int t = 0; t < sim.targetCount; t++) {
+        for (int t = 0; t < targets.targetCount; t++) {
             Color col = targetColor(t);
-            Vector2 prev = interpTarget(sim, t, 0.0);
+            Vector2 prev = interpTarget(targets, t, 0.0);
             for (int k = 1; k < pathSamples; k++) {
                 double tt = std::min((double)k * pathStep, playbackTime);
-                Vector2 cur = interpTarget(sim, t, tt);
+                Vector2 cur = interpTarget(targets, t, tt);
                 DrawLine3D(toRl(prev.x, prev.y, 0.05f), toRl(cur.x, cur.y, 0.05f), Fade(col, 0.55f));
                 prev = cur;
             }
-            Vector2 p = interpTarget(sim, t, playbackTime);
-            Vector2 pAhead = interpTarget(sim, t, playbackTime + sim.simTimeStep);
+            Vector2 p = interpTarget(targets, t, playbackTime);
+            Vector2 pAhead = interpTarget(targets, t, playbackTime + targets.arrayTimeStep * 0.1);
             float targetYaw = std::atan2(pAhead.y - p.y, pAhead.x - p.x);
             Vector3 pos = toRl(p.x, p.y, 0.45f);
-            drawTankModel(pos, targetYaw, col, t == droneTg);
-            DrawCircle3D({pos.x, 0.05f, pos.z}, sim.hitRadius, {1, 0, 0}, 90.0f, Fade(col, 0.5f));
-            if (t == droneTg) {
-                DrawCircle3D({pos.x, 0.06f, pos.z}, sim.hitRadius * 1.6f, {1, 0, 0}, 90.0f, YELLOW);
+            bool selected = false;
+            for (size_t i = 0; i < activeFlights.size(); i++) {
+                if (activeFlights[i].targetIdx == t) {
+                    selected = true;
+                    break;
+                }
+            }
+            drawTankModel(pos, targetYaw, col, selected);
+            DrawCircle3D({pos.x, 0.05f, pos.z}, targets.hitRadius, {1, 0, 0}, 90.0f, Fade(col, 0.5f));
+            for (size_t i = 0; i < activeFlights.size(); i++) {
+                if (activeFlights[i].targetIdx == t) {
+                    DrawCircle3D({pos.x, 0.06f + 0.01f * (float)i, pos.z},
+                                 targets.hitRadius * (1.45f + 0.12f * (float)i),
+                                 {1, 0, 0}, 90.0f, droneColor((int)i));
+                }
             }
         }
 
-        for (int i = 1; i <= idx; i++) {
-            DrawLine3D(toRl(sim.steps[i - 1].pos.x, sim.steps[i - 1].pos.y, sim.altitude),
-                       toRl(sim.steps[i].pos.x, sim.steps[i].pos.y, sim.altitude),
-                       (Color){56, 189, 248, 200});
-        }
+        for (size_t flightIdx = 0; flightIdx < flights.size(); flightIdx++) {
+            const FlightData &flight = flights[flightIdx];
+            const ActiveFlightState &state = activeFlights[flightIdx];
+            Color col = droneColor((int)flightIdx);
 
-        Vector3 dronePos = toRl(droneWx, droneWy, sim.altitude);
-        drawDroneModel(dronePos, droneD, (Color){56, 189, 248, 255});
-        Vector3 nose = toRl(droneWx + std::cos(droneD) * 4.8f, droneWy + std::sin(droneD) * 4.8f, sim.altitude);
-        DrawLine3D(dronePos, nose, YELLOW);
-        DrawSphere(nose, 0.4f, YELLOW);
-        DrawLine3D(dronePos, {dronePos.x, 0.05f, dronePos.z}, (Color){56, 189, 248, 80});
-        DrawCircle3D({dronePos.x, 0.05f, dronePos.z}, 1.2f, {1, 0, 0}, 90.0f, (Color){56, 189, 248, 180});
+            for (int i = 1; i <= state.idx; i++) {
+                DrawLine3D(toRl(flight.steps[i - 1].pos.x, flight.steps[i - 1].pos.y, flight.altitude),
+                           toRl(flight.steps[i].pos.x, flight.steps[i].pos.y, flight.altitude),
+                           Fade(col, 0.75f));
+            }
 
-        if (sim.dropped) {
-            for (size_t i = 1; i < sim.projectilePath.size(); i++) {
-                DrawLine3D(sim.projectilePath[i - 1], sim.projectilePath[i], (Color){248, 113, 113, 180});
+            Vector3 dronePos = toRl(state.wx, state.wy, flight.altitude);
+            drawDroneModel(dronePos, state.direction, col);
+            Vector3 nose = toRl(state.wx + std::cos(state.direction) * 4.8f,
+                                state.wy + std::sin(state.direction) * 4.8f, flight.altitude);
+            DrawLine3D(dronePos, nose, Fade(col, 0.8f));
+            DrawSphere(nose, 0.35f, Fade(col, 0.9f));
+            DrawLine3D(dronePos, {dronePos.x, 0.05f, dronePos.z}, Fade(col, 0.3f));
+            DrawCircle3D({dronePos.x, 0.05f, dronePos.z}, 1.0f, {1, 0, 0}, 90.0f, Fade(col, 0.7f));
+
+            if (flight.dropped) {
+                for (size_t i = 1; i < flight.projectilePath.size(); i++) {
+                    DrawLine3D(flight.projectilePath[i - 1], flight.projectilePath[i], Fade(col, 0.55f));
+                }
+                if (!flight.projectilePath.empty()) {
+                    Vector3 landing = flight.projectilePath.back();
+                    DrawSphere({landing.x, 0.05f, landing.z}, 0.8f, Fade(col, 0.9f));
+                    DrawCircle3D({landing.x, 0.06f, landing.z}, flight.hitRadius, {1, 0, 0}, 90.0f, col);
+                }
             }
-            if (!sim.projectilePath.empty()) {
-                Vector3 landing = sim.projectilePath.back();
-                DrawSphere({landing.x, 0.05f, landing.z}, 1.0f, (Color){248, 113, 113, 255});
-                DrawCircle3D({landing.x, 0.06f, landing.z}, sim.hitRadius, {1, 0, 0}, 90.0f,
-                             (Color){248, 113, 113, 255});
+
+            if (state.projectileActive) {
+                DrawSphere(state.projectilePos, 0.9f, col);
+                DrawLine3D(state.projectilePos, {state.projectilePos.x, 0.05f, state.projectilePos.z},
+                           Fade(col, 0.45f));
             }
-        }
-        if (projActive) {
-            DrawSphere(projPos, 1.0f, (Color){250, 204, 21, 255});
-            DrawLine3D(projPos, {projPos.x, 0.05f, projPos.z}, (Color){250, 204, 21, 120});
         }
 
         EndMode3D();
 
+        for (size_t i = 0; i < flights.size(); i++) {
+            const FlightData &flight = flights[i];
+            const ActiveFlightState &state = activeFlights[i];
+            Vector3 labelWorldPos = toRl(state.wx, state.wy, flight.altitude + 6.0f);
+            Vector2 labelScreenPos = GetWorldToScreen(labelWorldPos, cam);
+            int labelWidth = MeasureText(flight.ammoName.c_str(), 16);
+            int labelX = (int)labelScreenPos.x - labelWidth / 2;
+            int labelY = (int)labelScreenPos.y - 10;
+
+            if (labelScreenPos.x >= 0.0f && labelScreenPos.x <= (float)GetScreenWidth() &&
+                labelScreenPos.y >= 0.0f && labelScreenPos.y <= (float)GetScreenHeight()) {
+                DrawText(flight.ammoName.c_str(), labelX + 1, labelY + 1, 16, Fade(BLACK, 0.75f));
+                DrawText(flight.ammoName.c_str(), labelX, labelY, 16, droneColor((int)i));
+            }
+        }
+
         int scrW = GetScreenWidth();
         int scrH = GetScreenHeight();
-        DrawRectangle(10, 10, 420, 170, (Color){15, 23, 42, 220});
-        DrawRectangleLines(10, 10, 420, 170, (Color){51, 65, 85, 255});
+        int infoHeight = 90 + (int)flights.size() * 24;
+        DrawRectangle(10, 10, 520, infoHeight, (Color){15, 23, 42, 220});
+        DrawRectangleLines(10, 10, 520, infoHeight, (Color){51, 65, 85, 255});
         DrawText("dz3 drone simulation", 22, 20, 22, (Color){226, 232, 240, 255});
         char buf[256];
-        std::snprintf(buf, sizeof(buf), "Ammo: %s (m=%.2f, d=%.2f, l=%.1f)", sim.ammoName.c_str(), sim.bombM, sim.bombD, sim.bombL);
+        std::snprintf(buf, sizeof(buf), "Drones: %d   Targets: %d   t=%.2f / %.2f s   speed x%.2f",
+                      (int)flights.size(), targets.targetCount, playbackTime, totalTime, speedMul);
         DrawText(buf, 22, 48, 16, LIGHTGRAY);
-        std::snprintf(buf, sizeof(buf), "Altitude=%.1f m, V0=%.1f m/s, hitR=%.1f m", sim.altitude, sim.attackSpeed, sim.hitRadius);
+        std::snprintf(buf, sizeof(buf), "Altitude max=%.1f m, target hitR=%.1f m, source=%s",
+                      maxAltitude, targets.hitRadius, dir.c_str());
         DrawText(buf, 22, 70, 16, LIGHTGRAY);
-        std::snprintf(buf, sizeof(buf), "Step: %d / %d    t=%.2f s    speed x%.2f", idx, sim.stepCount - 1, playbackTime, speedMul);
-        DrawText(buf, 22, 92, 16, WHITE);
-        std::snprintf(buf, sizeof(buf), "Drone pos=(%.1f, %.1f)  dir=%.2f rad", droneWx, droneWy, droneD);
-        DrawText(buf, 22, 114, 16, LIGHTGRAY);
-        DrawText(TextFormat("State: %s", stateName(droneSt)), 22, 136, 16, stateColor(droneSt));
-        DrawText(TextFormat("Target: T%d", droneTg), 200, 136, 16, targetColor(droneTg));
-        DrawText(playing ? "> PLAYING" : "|| PAUSED", 22, 156, 16, playing ? GREEN : ORANGE);
+        DrawText(playing ? "> PLAYING" : "|| PAUSED", 400, 70, 16, playing ? GREEN : ORANGE);
+
+        for (size_t i = 0; i < flights.size(); i++) {
+            const FlightData &flight = flights[i];
+            const ActiveFlightState &state = activeFlights[i];
+            std::snprintf(buf, sizeof(buf), "%s  pos=(%.1f, %.1f)  %s  T%d  drop=%s  miss=%.2f m",
+                          flight.ammoName.c_str(), state.wx, state.wy, stateName(state.state),
+                          state.targetIdx, flight.dropped ? "YES" : "NO", flight.missDistance);
+            DrawText(buf, 22, 98 + (int)i * 24, 16, droneColor((int)i));
+        }
 
         DrawRectangle(scrW - 260, 10, 250, 270, (Color){15, 23, 42, 220});
         DrawRectangleLines(scrW - 260, 10, 250, 270, (Color){51, 65, 85, 255});
@@ -753,11 +862,15 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (sim.dropped) {
-            double dropStart = sim.dropStepIdx * (double)sim.simTimeStep;
+        for (size_t i = 0; i < flights.size(); i++) {
+            const FlightData &flight = flights[i];
+            if (!flight.dropped || totalTime <= 0.0) continue;
+
+            double dropStart = flight.dropStepIdx * (double)flight.simTimeStep;
             float dropXbar = barX + (float)(dropStart / totalTime) * barW;
-            DrawLine((int)dropXbar, barY - 2, (int)dropXbar, barY + barH + 2, (Color){248, 113, 113, 255});
-            DrawText("drop", (int)dropXbar - 12, barY + barH + 4, 12, (Color){248, 113, 113, 255});
+            Color col = droneColor((int)i);
+            DrawLine((int)dropXbar, barY - 2, (int)dropXbar, barY + barH + 2, col);
+            DrawText(flight.ammoName.c_str(), (int)dropXbar - 18, barY + barH + 4 + (int)i * 12, 12, col);
         }
 
         float curX = barX + (float)(playbackTime / totalTime) * barW;
@@ -772,8 +885,12 @@ int main(int argc, char **argv) {
         }
 
         DrawText(TextFormat("t = %.2f / %.2f s", playbackTime, totalTime), barX, scrH - 30, 14, LIGHTGRAY);
-        DrawText(sim.dropped ? "Dropped: YES" : "Dropped: NO", barX + 180, scrH - 30, 14,
-                 sim.dropped ? (Color){34, 197, 94, 255} : ORANGE);
+        int droppedCount = 0;
+        for (const auto &flight : flights) {
+            if (flight.dropped) droppedCount++;
+        }
+        DrawText(TextFormat("Dropped: %d / %d", droppedCount, (int)flights.size()), barX + 180, scrH - 30, 14,
+                 droppedCount == (int)flights.size() ? (Color){34, 197, 94, 255} : ORANGE);
 
         EndDrawing();
     }

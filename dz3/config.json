@@ -1,17 +1,20 @@
 {
-  "startPos": {
-    "x": 0.0,
-    "y": 0.0
+  "drone": {
+    "position": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "altitude": 120.0,
+    "initialDirection": 0.0,
+    "attackSpeed": 30.0,
+    "accelerationPath": 50.0,
+    "angularSpeed": 1.5,
+    "turnThreshold": 0.3
   },
-  "altitude": 120.0,
-  "initialDir": 0.0,
-  "attackSpeed": 30.0,
-  "accelPath": 50.0,
-  "ammoName": "M67",
-  "arrayTimeStep": 1.0,
-  "simTimeStep": 0.1,
-  "hitRadius": 2.0,
-  "angularSpeed": 1.5,
-  "turnThreshold": 0.3,
-  "maxSteps": 10000
+  "ammo": "GLIDING-VOG",
+  "simulation": {
+    "timeStep": 0.1,
+    "hitRadius": 2.0
+  },
+  "targetArrayTimeStep": 1.0
 }

@@ -14,6 +14,6 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(TARGET) simulation.json
+	rm -f $(TARGET) simulation.json projectile.json simulation_*.json projectile_*.json
 
 rebuild: clean all
