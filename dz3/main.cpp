@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -139,12 +140,11 @@ struct DroneConfig {
 // Один крок симуляції - шо дрон робив у даний момент часу
 struct SimStep {
     Coord pos;             // де він був
+    Coord dropPoint;       // куди планував скинути
+    Coord predictedTarget; // де буде ціль коли боєприпас долетить
     float direction;       // куди дивився
     int state;             // шо робив (з нашого енума)
     int targetIdx;         // кого збирався мочити
-    Coord dropPoint;       // куди планував скинути
-    Coord aimPoint;        // куди цілився
-    Coord predictedTarget; // де буде ціль коли боєприпас долетить
 };
 
 // Точка на траєкторії снаряда після скидання - час і де він у просторі
@@ -170,42 +170,51 @@ struct SimulationRunResult {
 };
 
 // Довжина вектора - класична теорема Піфагора, тіки через hypot, щоб не ловити переповнення
-float length(Coord coord) {
+float length(const Coord &coord) {
     return std::hypot(coord.x, coord.y);
 }
 
 // Нормалізація - робимо вектор одиничним (довжина = 1)
 // Якшо вектор нульовий - повертаємо нулі, бо ділити на нуль - гріх великий
-Coord normalize(Coord coord) {
+Coord normalize(const Coord &coord) {
     float len = length(coord);
     if (len < (float)EPS) return {0.0f, 0.0f};
     return coord / len;
 }
 
-// Конвертація кординати в JSON-чик - щоб потім виплюнути в файлик
-json coordToJson(const Coord &coord) {
-    return json{{"x", coord.x}, {"y", coord.y}};
+// Конвертація кординати напряму в потік - без проміжного DOM, шоб не тримати дві копії даних
+void writeCoordJson(std::ostream &out, const Coord &coord) {
+    out << "{\"x\": " << coord.x << ", \"y\": " << coord.y << "}";
 }
 
-// Пакуємо цілий крок симуляції в JSON - все по поличкам
-json stepToJson(const SimStep &step) {
-    return json{
-        {"position", coordToJson(step.pos)},
-        {"direction", step.direction},
-        {"state", step.state},
-        {"targetIndex", step.targetIdx},
-        {"dropPoint", coordToJson(step.dropPoint)},
-        {"aimPoint", coordToJson(step.aimPoint)},
-        {"predictedTarget", coordToJson(step.predictedTarget)}
-    };
+// Крок симуляції теж одразу серіалізуємо у файл - формат той самий, аллокацій менше
+void writeStepJson(std::ostream &out, const SimStep &step, const char *indent) {
+    out << indent << "{\n";
+    out << indent << "  \"position\": ";
+    writeCoordJson(out, step.pos);
+    out << ",\n";
+    out << indent << "  \"direction\": " << step.direction << ",\n";
+    out << indent << "  \"state\": " << step.state << ",\n";
+    out << indent << "  \"targetIndex\": " << step.targetIdx << ",\n";
+    out << indent << "  \"dropPoint\": ";
+    writeCoordJson(out, step.dropPoint);
+    out << ",\n";
+    out << indent << "  \"aimPoint\": ";
+    writeCoordJson(out, step.predictedTarget);
+    out << ",\n";
+    out << indent << "  \"predictedTarget\": ";
+    writeCoordJson(out, step.predictedTarget);
+    out << "\n" << indent << "}";
 }
 
-// Точку снаряда теж пакуємо - з висотою Z, бо тут вже 3D, літає як птиця
-json projectilePointToJson(const ProjectilePoint &point) {
-    return json{
-        {"t", point.t},
-        {"pos", {{"x", point.pos.x}, {"y", point.pos.y}, {"z", point.z}}}
-    };
+// Точку траєкторії теж сиплемо напряму в потік - без проміжного json-дерева
+void writeProjectilePointJson(std::ostream &out, const ProjectilePoint &point, const char *indent) {
+    out << indent << "{\n";
+    out << indent << "  \"t\": " << point.t << ",\n";
+    out << indent << "  \"pos\": {\"x\": " << point.pos.x
+        << ", \"y\": " << point.pos.y
+        << ", \"z\": " << point.z << "}\n";
+    out << indent << "}";
 }
 
 // Зчитуємо JSON-ку з файла в пам'ять. Якшо шось пішло не так - маєм облом, кажем про це
@@ -291,8 +300,8 @@ bool loadConfig(const char *path, DroneConfig &config, int &maxSteps) {
     return true;
 }
 
-// Підгружаємо табличку боєприпасів - там масив зі всіма варіантами, шо у нас є
-bool loadAmmo(const char *path, AmmoParams *&ammoTable, int &ammoCount) {
+// Підгружаємо табличку боєприпасів - тримаємо її в vector, шоб не морочитись з delete[]
+bool loadAmmo(const char *path, std::vector<AmmoParams> &ammoTable, int &ammoCount) {
     json data;
     if (!loadJsonFile(path, data)) return false;
     // якщо там пусто або не масив - то шо ми взагалі симулювати будемо, дим?
@@ -302,8 +311,8 @@ bool loadAmmo(const char *path, AmmoParams *&ammoTable, int &ammoCount) {
     }
 
     ammoCount = (int)data.size();
-    // виділяємо пам'ять під всю табличку. Не забути потім почистити!
-    ammoTable = new AmmoParams[ammoCount];
+    // вся табличка лежить одним шматком пам'яті без ручного керування
+    ammoTable.resize(ammoCount);
 
     for (int i = 0; i < ammoCount; i++) {
         try {
@@ -327,9 +336,8 @@ bool loadAmmo(const char *path, AmmoParams *&ammoTable, int &ammoCount) {
     return true;
 }
 
-// Читаємо цілі - для кожної цілі є масив позицій на різні моменти часу (типу траєкторія руху)
-// Двомірний масив: [номер цілі][момент часу] -> координата
-bool loadTargets(const char *path, Coord **&targets, int &targetCount, int &timeSteps) {
+// Читаємо цілі в один плоский масив: [номер цілі * timeSteps + момент часу]
+bool loadTargets(const char *path, std::vector<Coord> &targets, int &targetCount, int &timeSteps) {
     json data;
     if (!loadJsonFile(path, data)) return false;
     // без масива targets далі робити нічого - шо мочити то?
@@ -355,11 +363,7 @@ bool loadTargets(const char *path, Coord **&targets, int &targetCount, int &time
         return false;
     }
 
-    targets = new Coord *[targetCount];
-    // ініціалізуємо нулями, щоб якшо шось піде не так - freeTargets не напаскудив
-    for (int i = 0; i < targetCount; i++) {
-        targets[i] = nullptr;
-    }
+    targets.resize((size_t)targetCount * (size_t)timeSteps);
 
     for (int i = 0; i < targetCount; i++) {
         // перевірка шо всі цілі однакової довжини - інакше буде невідповідь по часу
@@ -371,10 +375,9 @@ bool loadTargets(const char *path, Coord **&targets, int &targetCount, int &time
             return false;
         }
 
-        targets[i] = new Coord[timeSteps];
         const json &positions = targetArray.at(i).at("positions");
         for (int j = 0; j < timeSteps; j++) {
-            if (!readCoordObject(positions.at(j), targets[i][j])) {
+            if (!readCoordObject(positions.at(j), targets[(size_t)i * (size_t)timeSteps + (size_t)j])) {
                 std::cout << "Error: invalid target coordinate at [" << i << "][" << j << "]\n";
                 return false;
             }
@@ -384,19 +387,9 @@ bool loadTargets(const char *path, Coord **&targets, int &targetCount, int &time
     return true;
 }
 
-// Прибираємо за собою - повертаємо пам'ять в кучу, щоб не тікла, як кран на кухні
-void freeTargets(Coord **&targets, int targetCount) {
-    if (targets == nullptr) return;
-    for (int i = 0; i < targetCount; i++) {
-        delete[] targets[i];
-        targets[i] = nullptr;
-    }
-    delete[] targets;
-    targets = nullptr;
-}
-
 // Шукаємо боєприпас за назвою в нашій табличці. Якщо нема - повертаєм -1, як знак біди
-int findAmmo(const AmmoParams *ammoTable, int ammoCount, const char *name) {
+int findAmmo(const std::vector<AmmoParams> &ammoTable, const char *name) {
+    int ammoCount = (int)ammoTable.size();
     for (int i = 0; i < ammoCount; i++) {
         if (std::strcmp(name, ammoTable[i].name) == 0) return i;
     }
@@ -420,6 +413,7 @@ double solveCardanoTime(double a, double b, double c, bool &ok) {
     double discriminant = (q * q) / 4.0 + (p * p * p) / 27.0;
 
     std::vector<double> roots;
+    roots.reserve(3);
     // мала лямбда, щоб не пхати дубль-корінь двічі (а то з чисельності бува)
     auto addRoot = [&](double root) {
         for (size_t i = 0; i < roots.size(); i++) {
@@ -536,7 +530,7 @@ bool computeBallistics(double altitude, double V0, const AmmoParams &ammo,
 
 // Інтерполяція позиції цілі в часі - між двома сусідніми кадрами лінійно прикидуємо, де ціль зара
 // Циклічно обертаємо індекси, щоб не вилетіти за межі масиву (коли час більший за повний цикл)
-Coord interpTarget(Coord **targetsInTime, int timeSteps, int targetIdx,
+Coord interpTarget(const std::vector<Coord> &targetsInTime, int timeSteps, int targetIdx,
                    double t, double arrayTimeStep) {
     double tt = t / arrayTimeStep;
     int idx = ((int)std::floor(tt)) % timeSteps;
@@ -545,11 +539,11 @@ Coord interpTarget(Coord **targetsInTime, int timeSteps, int targetIdx,
     double frac = tt - std::floor(tt);  // дробова частинка - на скіки між кадрами ми зараз
 
     // лінійна інтерполяція: між idx і next беремо лінійку
+    const Coord &current = targetsInTime[(size_t)targetIdx * (size_t)timeSteps + (size_t)idx];
+    const Coord &nextCoord = targetsInTime[(size_t)targetIdx * (size_t)timeSteps + (size_t)next];
     Coord result;
-    result.x = static_cast<float>(targetsInTime[targetIdx][idx].x +
-               (targetsInTime[targetIdx][next].x - targetsInTime[targetIdx][idx].x) * frac);
-    result.y = static_cast<float>(targetsInTime[targetIdx][idx].y +
-               (targetsInTime[targetIdx][next].y - targetsInTime[targetIdx][idx].y) * frac);
+    result.x = static_cast<float>(current.x + (nextCoord.x - current.x) * frac);
+    result.y = static_cast<float>(current.y + (nextCoord.y - current.y) * frac);
     return result;
 }
 
@@ -587,7 +581,7 @@ double estimateDroneTravelTime(double dist, double speed, double attackSpeed, do
 // Найбільш жирна функція планування: рахує, куди кидати бахкало, щоб попасти в ціль
 // Враховує шо ціль рухається, що дрон поки летить, що снаряд має час падіння
 // Повертає точку скидання, передбачену позицію цілі, час прильоту і час польоту снаряда
-bool computeDropPoint(Coord **targetPositions, int timeSteps, int targetIdx,
+bool computeDropPoint(const std::vector<Coord> &targetPositions, int timeSteps, int targetIdx,
                       double currentTime, double arrayTimeStep, double simTimeStep,
                       double altitude, double V0, const AmmoParams &ammo,
                       const Coord &dronePos, double droneSpeed, double accel,
@@ -712,7 +706,6 @@ bool writeSimulationJson(const char *path, const DroneConfig &config,
                          SimStep *steps, int stepCount, int targetCount, int timeSteps,
                          int selectedTarget, bool dropped,
                          const Coord &finalDropPoint, double currentTime) {
-    json data;
     // ці параметри поки шо не юзаємо - тре щоб компайлер не бурчав на unused
     (void)config;
     (void)selectedAmmo;
@@ -722,20 +715,27 @@ bool writeSimulationJson(const char *path, const DroneConfig &config,
     (void)dropped;
     (void)finalDropPoint;
     (void)currentTime;
-    // пишемо кіки кроків та самі кроки - мінімум для вьюера
-    data["totalSteps"] = stepCount;
-    data["steps"] = json::array();
-    for (int i = 0; i < stepCount; i++) {
-        data["steps"].push_back(stepToJson(steps[i]));
-    }
-
     std::ofstream fout(path);
     if (!fout.is_open()) {
         std::cout << "Error: cannot create " << path << "\n";
         return false;
     }
-    // гарне форматування з відступами, шоб очі не вилізли при перегляді
-    fout << std::setw(2) << data << "\n";
+    fout << std::setprecision(std::numeric_limits<double>::max_digits10);
+    fout << "{\n";
+    fout << "  \"totalSteps\": " << stepCount << ",\n";
+    fout << "  \"steps\": [";
+    if (stepCount > 0) fout << "\n";
+    for (int i = 0; i < stepCount; i++) {
+        writeStepJson(fout, steps[i], "    ");
+        if (i + 1 < stepCount) fout << ",";
+        fout << "\n";
+    }
+    if (stepCount > 0) {
+        fout << "  ]\n";
+    } else {
+        fout << "]\n";
+    }
+    fout << "}\n";
     return true;
 }
 
@@ -743,27 +743,37 @@ bool writeSimulationJson(const char *path, const DroneConfig &config,
 bool writeProjectileJson(const char *path, bool dropped,
                          int dropStepIdx, const Coord &dropOrigin, const Coord &targetPoint,
                          double dropTOfFlight, const std::vector<ProjectilePoint> &projectilePath) {
-    json data;
-    // прапорець available - шоб вьюер знав, чи є шо рендерити взагалі
-    data["projectile"] = {
-        {"available", dropped && !projectilePath.empty()},
-        {"dropStepIdx", dropStepIdx},
-        {"dropOrigin", coordToJson(dropOrigin)},
-        {"targetPoint", coordToJson(targetPoint)},
-        {"timeOfFlight", dropTOfFlight},
-        {"points", json::array()}
-    };
-    // засипаємо всі точки траєкторії одну за одною
-    for (size_t i = 0; i < projectilePath.size(); i++) {
-        data["projectile"]["points"].push_back(projectilePointToJson(projectilePath[i]));
-    }
-
     std::ofstream fout(path);
     if (!fout.is_open()) {
         std::cout << "Error: cannot create " << path << "\n";
         return false;
     }
-    fout << std::setw(2) << data << "\n";
+    fout << std::setprecision(std::numeric_limits<double>::max_digits10);
+    fout << "{\n";
+    fout << "  \"projectile\": {\n";
+    fout << "    \"available\": " << ((dropped && !projectilePath.empty()) ? "true" : "false") << ",\n";
+    fout << "    \"dropStepIdx\": " << dropStepIdx << ",\n";
+    fout << "    \"dropOrigin\": ";
+    writeCoordJson(fout, dropOrigin);
+    fout << ",\n";
+    fout << "    \"targetPoint\": ";
+    writeCoordJson(fout, targetPoint);
+    fout << ",\n";
+    fout << "    \"timeOfFlight\": " << dropTOfFlight << ",\n";
+    fout << "    \"points\": [";
+    if (!projectilePath.empty()) fout << "\n";
+    for (size_t i = 0; i < projectilePath.size(); i++) {
+        writeProjectilePointJson(fout, projectilePath[i], "      ");
+        if (i + 1 < projectilePath.size()) fout << ",";
+        fout << "\n";
+    }
+    if (!projectilePath.empty()) {
+        fout << "    ]\n";
+    } else {
+        fout << "]\n";
+    }
+    fout << "  }\n";
+    fout << "}\n";
     return true;
 }
 
@@ -772,6 +782,7 @@ bool writeProjectileJson(const char *path, bool dropped,
 // Наприклад "RKG-3 EM" -> "rkg_3_em"
 std::string makeAmmoFileSlug(const char *ammoName) {
     std::string slug;
+    slug.reserve(std::strlen(ammoName));
     for (size_t i = 0; ammoName[i] != '\0'; i++) {
         unsigned char ch = static_cast<unsigned char>(ammoName[i]);
         if (std::isalnum(ch)) {
@@ -797,7 +808,7 @@ std::string makeAmmoFileSlug(const char *ammoName) {
 // МЯСО САМЕ - прогін симуляції для одного типу бахкала.
 // Тут вся логіка: дрон оглядає цілі, обирає найближчу, летить/повертає/скидає
 bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &selectedAmmo,
-                             Coord **targetsInTime, int targetCount, int timeSteps, int maxSteps,
+                             const std::vector<Coord> &targetsInTime, int targetCount, int timeSteps, int maxSteps,
                              SimulationRunResult &result) {
     // робимо копію конфіга і підмінюємо туди ім'я боєприпаса - щоб у звіті було правильно
     DroneConfig config = baseConfig;
@@ -828,7 +839,6 @@ bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &se
         int bestTarget = -1;
         Coord bestDropPoint = {0.0f, 0.0f};
         Coord bestPredictedTarget = {0.0f, 0.0f};
-        Coord bestAimPoint = {0.0f, 0.0f};
 
         for (int i = 0; i < targetCount; i++) {
             // для кожної цілі рахуємо куди кидати і скіки часу вся бодяга займе
@@ -879,7 +889,6 @@ bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &se
                 bestTarget = i;
                 bestDropPoint = dropPoint;
                 bestPredictedTarget = predictedTarget;
-                bestAimPoint = predictedTarget;
             }
         }
 
@@ -887,12 +896,11 @@ bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &se
         if (bestTarget < 0) {
             result.steps.push_back({
                 dronePos,
+                dronePos,
+                dronePos,
                 static_cast<float>(dir),
                 (int)state,
-                selectedTarget,
-                dronePos,
-                dronePos,
-                dronePos
+                selectedTarget
             });
             break;
         }
@@ -903,12 +911,11 @@ bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &se
 
         result.steps.push_back({
             dronePos,
+            bestDropPoint,
+            bestPredictedTarget,
             static_cast<float>(dir),
             (int)state,
-            selectedTarget,
-            bestDropPoint,
-            bestAimPoint,
-            bestPredictedTarget
+            selectedTarget
         });
 
         DEBUG("Step " << (int)result.steps.size()
@@ -1078,26 +1085,15 @@ bool runSingleAmmoSimulation(const DroneConfig &baseConfig, const AmmoParams &se
 int main() {
     // оголошуємо всю потрібну байду з нулями, щоб у cleanup не було несподіванок
     DroneConfig config = {};
-    AmmoParams *ammoTable = nullptr;
-    Coord **targetsInTime = nullptr;
-    SimStep *steps = nullptr;
+    std::vector<AmmoParams> ammoTable;
+    std::vector<Coord> targetsInTime;
     int ammoCount = 0;
     int targetCount = 0;
     int timeSteps = 0;
     int maxSteps = 0;
 
-    // лямбда-прибиральник: хто б не вибіг - пам'ять звільнимо, щоб не тікло
-    auto cleanup = [&]() {
-        delete[] ammoTable;
-        ammoTable = nullptr;
-        freeTargets(targetsInTime, targetCount);
-        delete[] steps;
-        steps = nullptr;
-    };
-
     // крок 1: читаємо конфіг - якщо зламався, то гейм овер
     if (!loadConfig("config.json", config, maxSteps)) {
-        cleanup();
         return 1;
     }
     LOG("Config loaded: attackSpeed=" << config.attackSpeed
@@ -1106,14 +1102,12 @@ int main() {
 
     // крок 2: підтягуємо табличку бахкал
     if (!loadAmmo("ammo.json", ammoTable, ammoCount)) {
-        cleanup();
         return 1;
     }
     LOG("Ammo loaded: " << ammoCount << " entries");
 
     // крок 3: завантажуємо цілі з їх траєкторіями
     if (!loadTargets("targets.json", targetsInTime, targetCount, timeSteps)) {
-        cleanup();
         return 1;
     }
     LOG("Targets loaded: " << targetCount << " targets, " << timeSteps << " time steps");
@@ -1129,35 +1123,29 @@ int main() {
     if (config.simTimeStep <= 0.0f || config.arrayTimeStep <= 0.0f ||
         config.accelPath <= 0.0f || config.attackSpeed <= 0.0f) {
         std::cout << "Error: invalid numeric parameters (step/accel/speed must be > 0)\n";
-        cleanup();
         return 1;
     }
     if (config.altitude <= 0.0f) {
         // без висоти скидати нема як - бахнеш сам собі по ногам
         std::cout << "Error: invalid altitude (must be > 0)\n";
-        cleanup();
         return 1;
     }
     if (config.angularSpeed <= 0.0f) {
         // якщо дрон не вміє крутитись - то він просто літаюча палка, так не годиться
         std::cout << "Error: invalid angularSpeed (must be > 0)\n";
-        cleanup();
         return 1;
     }
     if (config.hitRadius <= 0.0f) {
         // нульовий радіус попадання = ніколи не попадеш, ніфіга годі
         std::cout << "Error: invalid hitRadius (must be > 0)\n";
-        cleanup();
         return 1;
     }
     if (config.turnThreshold < 0.0f) {
         std::cout << "Error: invalid turnThreshold (must be >= 0)\n";
-        cleanup();
         return 1;
     }
     if (maxSteps <= 0 || ammoCount <= 0 || targetCount <= 0 || timeSteps <= 0) {
         std::cout << "Error: invalid dynamic sizes in JSON files\n";
-        cleanup();
         return 1;
     }
 
@@ -1174,7 +1162,6 @@ int main() {
         SimulationRunResult result;
         if (!runSingleAmmoSimulation(runConfig, selectedAmmo, targetsInTime, targetCount, timeSteps, maxSteps, result)) {
             std::cout << "Error: cannot simulate ammo " << selectedAmmo.name << "\n";
-            cleanup();
             return 1;
         }
 
@@ -1185,14 +1172,12 @@ int main() {
         if (!writeSimulationJson(simulationPath.c_str(), runConfig, selectedAmmo,
                                  result.steps.data(), result.stepCount, targetCount, timeSteps,
                                  result.selectedTarget, result.dropped, result.finalDropPoint, result.currentTime)) {
-            cleanup();
             return 1;
         }
 
         if (!writeProjectileJson(projectilePath.c_str(), result.dropped,
                                  result.dropStepIdx, result.dropOrigin, result.targetPoint,
                                  result.dropTOfFlight, result.projectilePath)) {
-            cleanup();
             return 1;
         }
 
@@ -1201,7 +1186,5 @@ int main() {
         LOG("Dropped: " << (result.dropped ? "YES" : "NO (limit or no target)"));
     }
 
-    // прибираємо за собою і виходимо з нулем - значить все путьом
-    cleanup();
     return 0;
 }
