@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/Users/anna/miltech/dz3/viewer/viewer.cpp" "CMakeFiles/drone_viewer.dir/viewer.cpp.o" "gcc" "CMakeFiles/drone_viewer.dir/viewer.cpp.o.d"
+  "/workspaces/miltech/dz3/viewer/viewer.cpp" "CMakeFiles/drone_viewer.dir/viewer.cpp.o" "gcc" "CMakeFiles/drone_viewer.dir/viewer.cpp.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.
