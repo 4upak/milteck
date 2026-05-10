@@ -1,6 +1,9 @@
+#include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -32,12 +35,91 @@ struct Pose {
     double theta{};
 };
 
-bool read_sample(std::istream& input, EncoderSample& sample)
+enum class ReadSampleStatus {
+    ok,
+    eof,
+    error,
+};
+
+bool is_blank_line(const std::string& line)
 {
-    // Зчитуємо один рядок телеметрії; false означає кінець файлу або помилку.
-    return static_cast<bool>(input >> sample.timestamp_ms >> sample.fl_ticks
-                             >> sample.fr_ticks >> sample.bl_ticks
-                             >> sample.br_ticks);
+    for (const unsigned char ch : line) {
+        if (!std::isspace(ch)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string build_open_error_message(const std::string& input_path)
+{
+    const std::filesystem::path path{input_path};
+    std::error_code error_code{};
+
+    if (!std::filesystem::exists(path, error_code)) {
+        if (error_code) {
+            return "Error: cannot access input file '" + input_path +
+                   "': " + error_code.message();
+        }
+
+        return "Error: input file does not exist: " + input_path;
+    }
+
+    if (!std::filesystem::is_regular_file(path, error_code)) {
+        if (error_code) {
+            return "Error: cannot inspect input file '" + input_path +
+                   "': " + error_code.message();
+        }
+
+        return "Error: input path is not a regular file: " + input_path;
+    }
+
+    return "Error: cannot open input file: " + input_path;
+}
+
+ReadSampleStatus read_sample(std::istream& input, EncoderSample& sample,
+                             std::size_t& line_number, std::string& error_message)
+{
+    std::string line{};
+
+    while (std::getline(input, line)) {
+        ++line_number;
+
+        if (is_blank_line(line)) {
+            continue;
+        }
+
+        std::istringstream line_stream{line};
+        if (!(line_stream >> sample.timestamp_ms >> sample.fl_ticks
+              >> sample.fr_ticks >> sample.bl_ticks >> sample.br_ticks)) {
+            error_message = "Error: invalid data on line " +
+                            std::to_string(line_number) +
+                            ": expected 5 integer values";
+            return ReadSampleStatus::error;
+        }
+
+        line_stream >> std::ws;
+        if (!line_stream.eof()) {
+            std::string extra_data{};
+            line_stream >> extra_data;
+            error_message = "Error: unexpected extra data on line " +
+                            std::to_string(line_number);
+            if (!extra_data.empty()) {
+                error_message += ": '" + extra_data + "'";
+            }
+            return ReadSampleStatus::error;
+        }
+
+        return ReadSampleStatus::ok;
+    }
+
+    if (input.bad()) {
+        error_message = "Error: I/O failure while reading the input file";
+        return ReadSampleStatus::error;
+    }
+
+    return ReadSampleStatus::eof;
 }
 
 void update_pose(Pose& pose, const EncoderSample& previous,
@@ -81,31 +163,45 @@ int main(int argc, char* argv[])
     std::ifstream input{input_path};
     // Перевіряємо, що файл успішно відкрився.
     if (!input) {
-        std::cerr << "Error: cannot open input file: " << input_path << '\n';
+        std::cerr << build_open_error_message(input_path) << '\n';
         return 1;
     }
 
     EncoderSample previous{};
+    std::size_t line_number{};
+    std::string read_error{};
     // Перше вимірювання потрібне як базова точка для подальших приростів.
-    if (!read_sample(input, previous)) {
-        std::cerr << "Error: input file is empty or has invalid format\n";
+    const ReadSampleStatus first_read_status{
+        read_sample(input, previous, line_number, read_error)};
+    if (first_read_status == ReadSampleStatus::eof) {
+        std::cerr << "Error: input file is empty or contains only blank lines\n";
+        return 1;
+    }
+
+    if (first_read_status == ReadSampleStatus::error) {
+        std::cerr << read_error << '\n';
         return 1;
     }
 
     Pose pose{};
     EncoderSample current{};
     // Для кожного нового вимірювання оновлюємо позу та виводимо результат.
-    while (read_sample(input, current)) {
+    while (true) {
+        const ReadSampleStatus status{
+            read_sample(input, current, line_number, read_error)};
+        if (status == ReadSampleStatus::eof) {
+            break;
+        }
+
+        if (status == ReadSampleStatus::error) {
+            std::cerr << read_error << '\n';
+            return 1;
+        }
+
         update_pose(pose, previous, current);
         std::cout << current.timestamp_ms << ' ' << pose.x << ' ' << pose.y
                   << ' ' << pose.theta << '\n';
         previous = current;
-    }
-
-    // Якщо цикл завершився не через EOF, значить формат даних пошкоджений.
-    if (!input.eof()) {
-        std::cerr << "Error: invalid input format\n";
-        return 1;
     }
 
     return 0;
