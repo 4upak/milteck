@@ -1,0 +1,29 @@
+{
+  "name": "miltech-cpp",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "C_Cpp.intelliSenseEngine": "disabled",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.associations": {
+          "cmath": "cpp",
+          "fstream": "cpp",
+          "iostream": "cpp",
+          "string": "cpp"
+        }
+      }
+    }
+  },
+  "postCreateCommand": "cmake --version && g++ --version"
+}

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="520" viewBox="0 0 980 520" role="img" aria-labelledby="title desc">
+<title id="title">UGV odometry trajectory for combined scenario</title>
+<desc id="desc">Robot drives 20 seconds straight and then 20 seconds along a left arc. The x and y axes use the same scale.</desc>
+<rect width="100%" height="100%" fill="#f8fafc"/>
+<rect x="18" y="18" width="944" height="484" rx="18" fill="white" stroke="#cbd5e1"/>
+<text x="36" y="52" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#0f172a">Combined trajectory: 20 s straight + 20 s left arc</text>
+<text x="36" y="78" font-family="Arial, sans-serif" font-size="14" fill="#475569">Final pose: x=56.31 m, y=6.39 m, theta=1.583 rad</text>
+<text x="36" y="98" font-family="Arial, sans-serif" font-size="13" fill="#64748b">Equal aspect ratio: 1 meter on X equals 1 meter on Y</text>
+<rect x="90" y="90" width="850" height="360" fill="#f8fafc" stroke="#cbd5e1"/>
+<line x1="35.04" y1="90" x2="35.04" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="35.04" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">-10</text>
+<line x1="160.83" y1="90" x2="160.83" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="160.83" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">0</text>
+<line x1="286.62" y1="90" x2="286.62" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="286.62" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">10</text>
+<line x1="412.41" y1="90" x2="412.41" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="412.41" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">20</text>
+<line x1="538.20" y1="90" x2="538.20" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="538.20" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">30</text>
+<line x1="663.99" y1="90" x2="663.99" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="663.99" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">40</text>
+<line x1="789.79" y1="90" x2="789.79" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="789.79" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">50</text>
+<line x1="915.58" y1="90" x2="915.58" y2="450" stroke="#e2e8f0" stroke-width="1"/>
+<text x="915.58" y="472" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#64748b">60</text>
+<line x1="90" y1="500.13" x2="940" y2="500.13" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="504.13" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">-40</text>
+<line x1="90" y1="446.86" x2="940" y2="446.86" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="450.86" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">-30</text>
+<line x1="90" y1="393.58" x2="940" y2="393.58" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="397.58" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">-20</text>
+<line x1="90" y1="340.31" x2="940" y2="340.31" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="344.31" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">-10</text>
+<line x1="90" y1="287.03" x2="940" y2="287.03" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="291.03" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">0</text>
+<line x1="90" y1="233.75" x2="940" y2="233.75" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="237.75" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">10</text>
+<line x1="90" y1="180.48" x2="940" y2="180.48" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="184.48" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">20</text>
+<line x1="90" y1="127.20" x2="940" y2="127.20" stroke="#e2e8f0" stroke-width="1"/>
+<text x="76" y="131.20" text-anchor="end" font-family="Arial, sans-serif" font-size="12" fill="#64748b">30</text>
+<line x1="160.83" y1="90" x2="160.83" y2="450" stroke="#94a3b8" stroke-width="1.5"/>
+<line x1="90" y1="287.03" x2="940" y2="287.03" stroke="#94a3b8" stroke-width="1.5"/>
+<polyline fill="none" stroke="#16a34a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" points="160.83,287.03 192.28,287.03 223.72,287.03 255.17,287.03 286.61,287.03 318.06,287.03 349.50,287.03 380.95,287.03 412.39,287.03 443.84,287.03 475.28,287.03 506.73,287.03 538.17,287.03 569.62,287.03 601.06,287.03 632.50,287.03 663.95,287.03 695.39,287.03 726.84,287.03 758.28,287.03 789.73,287.03 796.01,286.92 802.25,286.61 808.42,286.09 814.46,285.36 820.36,284.43 826.06,283.31 831.53,282.00 836.74,280.51 841.66,278.85 846.25,277.03 850.49,275.06 854.34,272.96 857.79,270.73 860.82,268.40 863.40,265.97 865.52,263.47 867.17,260.90 868.33,258.28 869.00,255.63 869.17,252.97"/>
+<circle cx="160.83" cy="287.03" r="6" fill="#0f172a" stroke="white" stroke-width="2"/>
+<text x="170.83" y="277.03" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#0f172a">start</text>
+<circle cx="789.73" cy="287.03" r="6" fill="#2563eb" stroke="white" stroke-width="2"/>
+<text x="799.73" y="277.03" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#2563eb">20 s</text>
+<circle cx="869.17" cy="252.97" r="6" fill="#dc2626" stroke="white" stroke-width="2"/>
+<text x="879.17" y="242.97" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#dc2626">finish</text>
+<line x1="869.00" y1="255.63" x2="869.17" y2="252.97" stroke="#16a34a" stroke-width="4" marker-end="url(#arrow)"/>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#16a34a"/></marker></defs>
+<text x="515.00" y="498" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#334155">x, meters</text>
+<text x="28" y="270.00" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#334155" transform="rotate(-90,28,270.00)">y, meters</text>
+</svg>
