@@ -6,12 +6,26 @@ RUN apt-get update \
         build-essential \
         cmake \
         gdb \
+        git \
         make \
         ninja-build \
         pkg-config \
-        libraylib-dev \
+        libasound2-dev \
         libgl1-mesa-dev \
         libglu1-mesa-dev \
+        libwayland-dev \
+        libx11-dev \
+        libxcursor-dev \
+        libxi-dev \
+        libxinerama-dev \
+        libxkbcommon-dev \
+        libxrandr-dev \
         xorg-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/raysan5/raylib.git /tmp/raylib \
+    && cmake -S /tmp/raylib -B /tmp/raylib/build -DBUILD_SHARED_LIBS=ON \
+    && cmake --build /tmp/raylib/build -j"$(nproc)" \
+    && cmake --install /tmp/raylib/build \
+    && rm -rf /tmp/raylib
