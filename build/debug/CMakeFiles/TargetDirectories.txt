@@ -1,0 +1,6 @@
+/Users/anna/miltech/build/debug/CMakeFiles/edit_cache.dir
+/Users/anna/miltech/build/debug/CMakeFiles/rebuild_cache.dir
+/Users/anna/miltech/build/debug/homework_05/CMakeFiles/telemetry.dir
+/Users/anna/miltech/build/debug/homework_05/CMakeFiles/telemetry_check.dir
+/Users/anna/miltech/build/debug/homework_05/CMakeFiles/edit_cache.dir
+/Users/anna/miltech/build/debug/homework_05/CMakeFiles/rebuild_cache.dir

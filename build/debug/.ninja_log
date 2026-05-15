@@ -1,0 +1,5 @@
+# ninja log v6
+1	1037	1778836011403058395	homework_05/CMakeFiles/telemetry_check.dir/src/main.cpp.o	2c277500e3355a37
+1	1083	1778836011402689061	homework_05/CMakeFiles/telemetry.dir/src/telemetry.cpp.o	4da560033c5c9424
+1083	1426	1778836012485199884	homework_05/libtelemetry.a	215f340916a7c1b2
+1426	1536	1778836012828270827	homework_05/telemetry_check	db5ad2e14c074c34

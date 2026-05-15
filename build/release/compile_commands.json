@@ -1,0 +1,14 @@
+[
+{
+  "directory": "/Users/anna/miltech/build/release",
+  "command": "/Library/Developer/CommandLineTools/usr/bin/c++ -I/Users/anna/miltech/homework_05/include -O3 -DNDEBUG -std=c++20 -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk -mmacosx-version-min=15.3 -Wall -Wextra -Wpedantic -o homework_05/CMakeFiles/telemetry.dir/src/telemetry.cpp.o -c /Users/anna/miltech/homework_05/src/telemetry.cpp",
+  "file": "/Users/anna/miltech/homework_05/src/telemetry.cpp",
+  "output": "homework_05/CMakeFiles/telemetry.dir/src/telemetry.cpp.o"
+},
+{
+  "directory": "/Users/anna/miltech/build/release",
+  "command": "/Library/Developer/CommandLineTools/usr/bin/c++ -I/Users/anna/miltech/homework_05/include -O3 -DNDEBUG -std=c++20 -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX15.5.sdk -mmacosx-version-min=15.3 -Wall -Wextra -Wpedantic -o homework_05/CMakeFiles/telemetry_check.dir/src/main.cpp.o -c /Users/anna/miltech/homework_05/src/main.cpp",
+  "file": "/Users/anna/miltech/homework_05/src/main.cpp",
+  "output": "homework_05/CMakeFiles/telemetry_check.dir/src/main.cpp.o"
+}
+]
