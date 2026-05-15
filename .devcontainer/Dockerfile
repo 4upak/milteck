@@ -6,10 +6,13 @@ RUN apt-get update \
         build-essential \
         cmake \
         gdb \
+        gdb-multiarch \
+        gdbserver \
         git \
         make \
         ninja-build \
         pkg-config \
+        valgrind \
         libasound2-dev \
         libgl1-mesa-dev \
         libglu1-mesa-dev \
