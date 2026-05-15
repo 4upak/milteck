@@ -35,6 +35,19 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
+    },
+    {
+      "name": "aarch64-debug",
+      "displayName": "AArch64 Debug",
+      "description": "ARM64 cross-compile debug build for CI checks.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/aarch64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_SYSTEM_NAME": "Linux",
+        "CMAKE_SYSTEM_PROCESSOR": "aarch64",
+        "CMAKE_CXX_COMPILER": "aarch64-linux-gnu-g++"
+      }
     }
   ],
   "buildPresets": [
@@ -52,6 +65,11 @@
       "name": "relwithdebinfo",
       "displayName": "Build RelWithDebInfo",
       "configurePreset": "relwithdebinfo"
+    },
+    {
+      "name": "aarch64-debug",
+      "displayName": "Build AArch64 Debug",
+      "configurePreset": "aarch64-debug"
     }
   ]
 }
