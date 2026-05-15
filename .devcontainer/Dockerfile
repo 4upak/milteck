@@ -5,6 +5,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
+        g++-aarch64-linux-gnu \
         gdb \
         gdb-multiarch \
         gdbserver \
