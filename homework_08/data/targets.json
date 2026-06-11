@@ -1,0 +1,9 @@
+{
+  "targets": [
+    { "name": "Tank-1",     "pos": { "x": 200.0, "y": 150.0 }, "velocity": { "x":  2.0, "y":  0.0 } },
+    { "name": "APC-2",      "pos": { "x": 350.0, "y": -80.0 }, "velocity": { "x":  0.0, "y":  5.0 } },
+    { "name": "Pickup-3",   "pos": { "x":  90.0, "y": 220.0 }, "velocity": { "x": -1.5, "y": -2.0 } },
+    { "name": "Bunker-4",   "pos": { "x": 500.0, "y": 500.0 }, "velocity": { "x":  0.0, "y":  0.0 } },
+    { "name": "Howitzer-5", "pos": { "x": 280.0, "y": 410.0 }, "velocity": { "x":  1.0, "y": -1.0 } }
+  ]
+}

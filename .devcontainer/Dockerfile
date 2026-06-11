@@ -4,12 +4,19 @@ RUN apt-get update \
     && export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y --no-install-recommends \
         build-essential \
+        clang-format \
+        clang-tidy \
         cmake \
+        cmake-format \
+        g++-aarch64-linux-gnu \
         gdb \
+        gdb-multiarch \
+        gdbserver \
         git \
         make \
         ninja-build \
         pkg-config \
+        valgrind \
         libasound2-dev \
         libgl1-mesa-dev \
         libglu1-mesa-dev \
