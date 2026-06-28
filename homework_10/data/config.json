@@ -1,0 +1,19 @@
+{
+  "drone": {
+    "position": {
+      "x": 0.0,
+      "y": 0.0
+    },
+    "altitude": 120.0,
+    "attackSpeed": 30.0
+  },
+  "ammo": "VOG-17",
+  "simulation": {
+    "simTimeStep": 0.05,
+    "arrayTimeStep": 0.05,
+    "targetTimeStep": 0.05,
+    "physicsTimeStep": 0.01,
+    "timeScale": 10.0,
+    "maxMissionTime": 1.0
+  }
+}
