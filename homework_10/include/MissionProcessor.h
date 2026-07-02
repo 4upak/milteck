@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "drone/DronePhysics.h"
+#include "drone/DroneState.h"
 #include "interfaces/IBallisticSolver.h"
 #include "interfaces/IConfigLoader.h"
 #include "interfaces/ITargetProvider.h"
@@ -48,12 +49,15 @@ private:
   };
 
   [[nodiscard]] DropPoint planStep(const DroneTelemetry& telemetry, const Target& target, Coord& predictedTarget) const;
+  void commandPhysicsFromState(const DroneTelemetry& telemetry, const DropPoint& dropPoint);
+  [[nodiscard]] bool reachedDropPoint(const DroneTelemetry& telemetry, const DropPoint& dropPoint) const;
   void writeSimulationLog(const std::vector<SimulationStep>& steps) const;
 
   std::unique_ptr<IConfigLoader> loader_;
   ITargetProvider& targets_;
   DronePhysics& physics_;
   std::unique_ptr<IBallisticSolver> solver_;
+  std::unique_ptr<IDroneState> state_;
   std::string output_path_;
   std::size_t current_idx_ = 0;
   bool initialized_ = false;

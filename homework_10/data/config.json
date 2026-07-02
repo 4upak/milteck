@@ -14,6 +14,6 @@
     "targetTimeStep": 0.05,
     "physicsTimeStep": 0.01,
     "timeScale": 10.0,
-    "maxMissionTime": 1.0
+    "maxMissionTime": 20.0
   }
 }

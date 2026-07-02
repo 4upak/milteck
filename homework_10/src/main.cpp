@@ -49,7 +49,7 @@ int main(int argc, char** argv)
       throw homework_10::Homework10Error{"unknown solver: " + solver_name};
     }
 
-    homework_10::ThreadSafeTargetProvider provider(targets_path, cfg.simulation.array_time_step, cfg.simulation.time_scale);
+    homework_10::ThreadSafeTargetProvider provider(targets_path, cfg.simulation.target_time_step, cfg.simulation.time_scale);
     homework_10::DronePhysics physics(cfg.drone_pos, cfg.attack_speed, cfg.simulation.physics_time_step, cfg.simulation.time_scale);
     homework_10::MissionProcessor mission(std::move(loader), provider, physics, std::move(solver), output_path);
     mission.init(config_dir);

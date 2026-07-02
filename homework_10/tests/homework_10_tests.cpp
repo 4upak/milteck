@@ -10,6 +10,7 @@
 #include "config/FileConfigLoader.h"
 #include "drone/DronePhysics.h"
 #include "interfaces/IBallisticSolver.h"
+#include "json.hpp"
 #include "MissionProcessor.h"
 #include "providers/ThreadSafeTargetProvider.h"
 #include "Types.h"
@@ -23,6 +24,14 @@ public:
   DropPoint solve(Coord drone_pos, Coord target_pos, double, double, const AmmoParams&) const override
   {
     return DropPoint{Coord{(drone_pos.x + target_pos.x) / 2.0, (drone_pos.y + target_pos.y) / 2.0}, 0.25, 10.0};
+  }
+};
+
+class ImmediateReachSolver : public IBallisticSolver {
+public:
+  DropPoint solve(Coord drone_pos, Coord, double, double, const AmmoParams&) const override
+  {
+    return DropPoint{drone_pos, 0.25, 0.0};
   }
 };
 
@@ -91,6 +100,27 @@ TEST(DronePhysics, ExecutesQueuedCommandAndUpdatesTelemetry)
   EXPECT_GT(telemetry.timeSecSinceStart, 0.0);
 }
 
+TEST(MissionProcessor, StepUsesStateMachineAndDoesNotAdvanceTargetWithoutReachingDropPoint)
+{
+  FileConfigLoader config_probe;
+  config_probe.load(dataDir().string());
+  const MissionConfig cfg = config_probe.getConfig();
+
+  ThreadSafeTargetProvider provider((dataDir() / "targets.json").string(), cfg.simulation.target_time_step, 100.0);
+  DronePhysics physics(cfg.drone_pos, cfg.attack_speed, cfg.simulation.physics_time_step, 100.0);
+  auto loader = std::make_unique<FileConfigLoader>();
+  MissionProcessor mission(std::move(loader), provider, physics, std::make_unique<ConstantSolver>());
+  mission.init(dataDir().string());
+
+  const DropPoint drop = mission.step();
+  EXPECT_GT(drop.time_of_flight, 0.0);
+  EXPECT_EQ(mission.currentIndex(), 0U);
+
+  physics.stepOnce(cfg.simulation.physics_time_step);
+  const DroneTelemetry telemetry = physics.getTelemetry();
+  EXPECT_TRUE(telemetry.state == DroneMode::Turning || telemetry.state == DroneMode::Accelerating || telemetry.state == DroneMode::Moving);
+}
+
 TEST(MissionProcessor, RunsInOwnThreadAndWritesSimulationJson)
 {
   const std::filesystem::path output = std::filesystem::temp_directory_path() / "homework_10_simulation_test.json";
@@ -100,10 +130,10 @@ TEST(MissionProcessor, RunsInOwnThreadAndWritesSimulationJson)
   config_probe.load(dataDir().string());
   const MissionConfig cfg = config_probe.getConfig();
 
-  ThreadSafeTargetProvider provider((dataDir() / "targets.json").string(), cfg.simulation.array_time_step, 100.0);
+  ThreadSafeTargetProvider provider((dataDir() / "targets.json").string(), cfg.simulation.target_time_step, 100.0);
   DronePhysics physics(cfg.drone_pos, cfg.attack_speed, cfg.simulation.physics_time_step, 100.0);
   auto loader = std::make_unique<FileConfigLoader>();
-  MissionProcessor mission(std::move(loader), provider, physics, std::make_unique<ConstantSolver>(), output.string());
+  MissionProcessor mission(std::move(loader), provider, physics, std::make_unique<ImmediateReachSolver>(), output.string());
   mission.init(dataDir().string());
 
   std::thread provider_thread(&ThreadSafeTargetProvider::run, &provider);
@@ -125,9 +155,16 @@ TEST(MissionProcessor, RunsInOwnThreadAndWritesSimulationJson)
 
   ASSERT_TRUE(std::filesystem::exists(output));
   std::ifstream input{output};
-  const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-  EXPECT_NE(text.find("timeSecSinceStart"), std::string::npos);
-  EXPECT_NE(text.find("predictedTarget"), std::string::npos);
+  const nlohmann::json data = nlohmann::json::parse(input);
+  ASSERT_TRUE(data.contains("steps"));
+  ASSERT_FALSE(data.at("steps").empty());
+  EXPECT_TRUE(data.at("steps").front().contains("timeSecSinceStart"));
+  EXPECT_TRUE(data.at("steps").front().contains("predictedTarget"));
+  bool saw_target_progress = false;
+  for (const nlohmann::json& step : data.at("steps")) {
+    saw_target_progress = saw_target_progress || step.at("targetIndex").get<std::size_t>() > 0;
+  }
+  EXPECT_TRUE(saw_target_progress);
   std::filesystem::remove(output);
 }
 

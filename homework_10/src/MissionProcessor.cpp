@@ -1,5 +1,6 @@
 #include "MissionProcessor.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
@@ -14,9 +15,48 @@
 namespace homework_10 {
 namespace {
 
+constexpr double kEpsilon = 1e-9;
+constexpr double kDefaultAcceleration = 10.0;
+constexpr double kDefaultAngularSpeed = 1.5;
+constexpr double kDefaultTurnThreshold = 0.2;
+constexpr double kDropReachTolerance = 2.0;
+
+[[nodiscard]] double positiveOrDefault(double value, double fallback)
+{
+  return value > kEpsilon ? value : fallback;
+}
+
+[[nodiscard]] double scalarSpeed(Coord speed)
+{
+  return std::hypot(speed.x, speed.y);
+}
+
+[[nodiscard]] double distance(Coord a, Coord b)
+{
+  return std::hypot(a.x - b.x, a.y - b.y);
+}
+
 [[nodiscard]] double directionTo(Coord from, Coord to)
 {
   return std::atan2(to.y - from.y, to.x - from.x);
+}
+
+[[nodiscard]] DroneMode modeFromStateName(const char* name)
+{
+  const std::string state_name{name};
+  if (state_name == "Accelerating") {
+    return DroneMode::Accelerating;
+  }
+  if (state_name == "Decelerating") {
+    return DroneMode::Decelerating;
+  }
+  if (state_name == "Turning") {
+    return DroneMode::Turning;
+  }
+  if (state_name == "Moving") {
+    return DroneMode::Moving;
+  }
+  return DroneMode::Stopped;
 }
 
 nlohmann::json coordToJson(Coord coord)
@@ -36,6 +76,7 @@ MissionProcessor::MissionProcessor(
   , targets_(targets)
   , physics_(physics)
   , solver_(std::move(solver))
+  , state_(std::make_unique<StateStopped>())
   , output_path_(std::move(outputPath))
 {
   if (loader_ == nullptr || solver_ == nullptr) {
@@ -46,8 +87,12 @@ MissionProcessor::MissionProcessor(
 void MissionProcessor::init(const std::string& configSource)
 {
   loader_->load(configSource);
+  state_ = std::make_unique<StateStopped>();
   current_idx_ = 0;
   initialized_ = true;
+  stop_requested_.store(false);
+  started_.store(false);
+  ready_.store(false);
 }
 
 bool MissionProcessor::isThreadReady() const
@@ -68,16 +113,11 @@ void MissionProcessor::run()
 
   const SimulationConfig sim = loader_->getConfig().simulation;
   std::vector<SimulationStep> log;
-  const std::size_t max_steps = static_cast<std::size_t>(std::ceil(sim.max_mission_time / sim.sim_time_step));
+  const std::size_t max_steps = static_cast<std::size_t>(std::ceil(sim.max_mission_time / positiveOrDefault(sim.sim_time_step, 0.05)));
   log.reserve(max_steps + 1);
 
-  for (std::size_t step_index = 0; step_index < max_steps && !stop_requested_.load(); ++step_index) {
-    if (targets_.getTargetCount() == 0) {
-      break;
-    }
-
-    const std::size_t target_index = step_index % targets_.getTargetCount();
-    const Target target = targets_.getTarget(target_index);
+  for (std::size_t step_index = 0; step_index < max_steps && !stop_requested_.load() && hasNext(); ++step_index) {
+    const Target target = targets_.getTarget(current_idx_);
     const DroneTelemetry telemetry = physics_.getTelemetry();
 
     Coord predicted{};
@@ -90,13 +130,16 @@ void MissionProcessor::run()
       drop.pos = target.pos;
     }
 
-    const double desired_direction = directionTo(telemetry.pos, drop.pos);
-    const double delta = normalizeAngle(desired_direction - telemetry.direction);
-    const DroneMode mode = std::fabs(delta) > 0.05 ? DroneMode::Turning : DroneMode::Accelerating;
-    physics_.pushCommand(DroneCommand{mode, 1.5, desired_direction, loader_->getConfig().attack_speed});
+    commandPhysicsFromState(telemetry, drop);
+    log.push_back(SimulationStep{telemetry, current_idx_, drop, drop.pos, predicted});
 
-    log.push_back(SimulationStep{telemetry, target_index, drop, drop.pos, predicted});
-    std::this_thread::sleep_for(std::chrono::duration<double>(sim.sim_time_step / sim.time_scale));
+    if (reachedDropPoint(telemetry, drop)) {
+      ++current_idx_;
+      state_ = std::make_unique<StateStopped>();
+      physics_.pushCommand(DroneCommand{DroneMode::Stopped, kDefaultAngularSpeed, telemetry.direction, 0.0});
+    }
+
+    std::this_thread::sleep_for(std::chrono::duration<double>(sim.sim_time_step / positiveOrDefault(sim.time_scale, 1.0)));
   }
 
   writeSimulationLog(log);
@@ -125,11 +168,16 @@ DropPoint MissionProcessor::step()
   if (!hasNext()) {
     throw Homework10Error{"MissionProcessor::step() called past the last target"};
   }
+
   const DroneTelemetry telemetry = physics_.getTelemetry();
   const Target target = targets_.getTarget(current_idx_);
   Coord predicted{};
   const DropPoint drop = planStep(telemetry, target, predicted);
-  ++current_idx_;
+  commandPhysicsFromState(telemetry, drop);
+  if (reachedDropPoint(telemetry, drop)) {
+    ++current_idx_;
+    state_ = std::make_unique<StateStopped>();
+  }
   return drop;
 }
 
@@ -139,6 +187,7 @@ void MissionProcessor::reset()
     throw Homework10Error{"MissionProcessor::reset() before init()"};
   }
   current_idx_ = 0;
+  state_ = std::make_unique<StateStopped>();
 }
 
 void MissionProcessor::changeSolver(std::unique_ptr<IBallisticSolver> solver)
@@ -177,6 +226,41 @@ DropPoint MissionProcessor::planStep(const DroneTelemetry& telemetry, const Targ
   DropPoint preliminary = solver_->solve(telemetry.pos, target.pos, cfg.altitude, cfg.attack_speed, ammo_params);
   predictedTarget = target.pos + target.velocity * preliminary.time_of_flight;
   return solver_->solve(telemetry.pos, predictedTarget, cfg.altitude, cfg.attack_speed, ammo_params);
+}
+
+void MissionProcessor::commandPhysicsFromState(const DroneTelemetry& telemetry, const DropPoint& dropPoint)
+{
+  const MissionConfig& cfg = loader_->getConfig();
+  const SimulationConfig& sim = cfg.simulation;
+  const double desired_direction = directionTo(telemetry.pos, dropPoint.pos);
+
+  DroneContext ctx;
+  ctx.position = telemetry.pos;
+  ctx.speed = scalarSpeed(telemetry.speed);
+  ctx.direction = telemetry.direction;
+  ctx.desired_direction = desired_direction;
+  ctx.target_direction = desired_direction;
+  ctx.cfg.attack_speed = positiveOrDefault(cfg.attack_speed, 1.0);
+  ctx.cfg.acceleration = std::max(kDefaultAcceleration, cfg.attack_speed * 2.0);
+  ctx.cfg.angular_speed = kDefaultAngularSpeed;
+  ctx.cfg.sim_time_step = positiveOrDefault(sim.sim_time_step, 0.05);
+  ctx.cfg.turn_threshold = kDefaultTurnThreshold;
+
+  std::unique_ptr<IDroneState> next = state_->execute(ctx);
+  if (next != nullptr) {
+    state_ = std::move(next);
+  }
+
+  const DroneMode command_mode = modeFromStateName(state_->name());
+  const double target_speed = (command_mode == DroneMode::Stopped) ? 0.0 : cfg.attack_speed;
+  physics_.pushCommand(DroneCommand{command_mode, ctx.cfg.angular_speed, desired_direction, target_speed});
+}
+
+bool MissionProcessor::reachedDropPoint(const DroneTelemetry& telemetry, const DropPoint& dropPoint) const
+{
+  const SimulationConfig& sim = loader_->getConfig().simulation;
+  const double tolerance = std::max(kDropReachTolerance, loader_->getConfig().attack_speed * positiveOrDefault(sim.sim_time_step, 0.05));
+  return distance(telemetry.pos, dropPoint.pos) <= tolerance;
 }
 
 void MissionProcessor::writeSimulationLog(const std::vector<SimulationStep>& steps) const
