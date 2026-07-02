@@ -158,7 +158,7 @@ TEST(TableSolver, UsesTableResultForDropPoint)
   EXPECT_DOUBLE_EQ(drop.pos.y, 0.0);
 }
 
-TEST(MissionProcessor, OwnsComponentsAndIteratesAllTargets)
+TEST(MissionProcessor, OwnsComponentsAndRunsTimeStepSimulation)
 {
   MissionProcessor mission(
     createLoader(LoaderType::File),
@@ -166,14 +166,24 @@ TEST(MissionProcessor, OwnsComponentsAndIteratesAllTargets)
     createSolver(SolverType::Analytical));
   mission.init(kDataDir.string());
 
-  std::size_t processed = 0;
+  const Coord start = mission.dronePosition();
+  std::size_t steps = 0;
+  bool saw_state_machine_work = false;
   while (mission.hasNext()) {
+    const std::size_t target_before = mission.currentIndex();
     const DropPoint drop = mission.step();
     EXPECT_GT(drop.time_of_flight, 0.0);
     EXPECT_GT(drop.horizontal_distance, 0.0);
-    ++processed;
+    EXPECT_GE(mission.currentIndex(), target_before);
+    saw_state_machine_work = saw_state_machine_work || std::string{mission.stateName()} != "Stopped";
+    ++steps;
   }
-  EXPECT_EQ(processed, mission.targets().size());
+
+  EXPECT_GT(steps, mission.targets().size());
+  EXPECT_GT(mission.currentTime(), 0.0);
+  EXPECT_TRUE(saw_state_machine_work);
+  EXPECT_NE(mission.dronePosition().x, start.x);
+  EXPECT_NE(mission.dronePosition().y, start.y);
   EXPECT_THROW((void)mission.step(), Homework09Error);
 }
 

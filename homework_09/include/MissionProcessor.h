@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "drone/DroneState.h"
 #include "interfaces/IBallisticSolver.h"
 #include "interfaces/IConfigLoader.h"
 #include "interfaces/ITargetProvider.h"
@@ -31,6 +32,9 @@ public:
   void changeSolver(std::unique_ptr<IBallisticSolver> solver);
 
   [[nodiscard]] std::size_t currentIndex() const;
+  [[nodiscard]] double currentTime() const;
+  [[nodiscard]] Coord dronePosition() const;
+  [[nodiscard]] const char* stateName() const;
   [[nodiscard]] const MissionConfig& config() const;
   [[nodiscard]] const AmmoParams& ammo() const;
   [[nodiscard]] const std::vector<Target>& targets() const;
@@ -39,7 +43,13 @@ private:
   std::unique_ptr<IConfigLoader> loader_;
   std::unique_ptr<ITargetProvider> targets_;
   std::unique_ptr<IBallisticSolver> solver_;
+  std::unique_ptr<IDroneState> state_;
+  DroneContext drone_{};
+  DropPoint last_drop_{};
   std::size_t current_idx_ = 0;
+  std::size_t max_steps_ = 20000;
+  std::size_t steps_done_ = 0;
+  double current_time_ = 0.0;
   bool initialized_ = false;
 };
 

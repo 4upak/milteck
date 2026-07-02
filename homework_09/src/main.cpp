@@ -66,13 +66,16 @@ int main(int argc, char** argv)
     std::cout << "mission start drone=(" << cfg.drone_pos.x << ", " << cfg.drone_pos.y << ")" << " altitude=" << cfg.altitude
               << " ammo=" << ammo.name << " solver=" << solver_name << " targets=" << targets.size() << '\n';
 
-    std::size_t idx = 0;
-    for (const homework_09::Target& target : targets) {
+    std::size_t step = 0;
+    while (mission.hasNext()) {
+      const std::size_t target_idx = mission.currentIndex();
+      const homework_09::Target& target = targets.at(target_idx);
       const homework_09::DropPoint drop = mission.step();
-      std::cout << "target " << idx << " '" << target.name << "'" << " pos=(" << target.pos.x << ", " << target.pos.y << ")"
-                << " drop=(" << drop.pos.x << ", " << drop.pos.y << ")" << " tof=" << drop.time_of_flight
-                << " range=" << drop.horizontal_distance << '\n';
-      ++idx;
+      const homework_09::Coord drone = mission.dronePosition();
+      std::cout << "step " << step << " t=" << mission.currentTime() << " state=" << mission.stateName() << " target " << target_idx
+                << " '" << target.name << "'" << " drone=(" << drone.x << ", " << drone.y << ")" << " drop=(" << drop.pos.x << ", "
+                << drop.pos.y << ")" << " tof=" << drop.time_of_flight << " range=" << drop.horizontal_distance << '\n';
+      ++step;
     }
   }
   catch (const homework_09::Homework09Error& error) {
