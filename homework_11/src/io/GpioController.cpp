@@ -1,6 +1,10 @@
 #include "io/GpioController.h"
 
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -59,8 +63,9 @@ void GpioController::open(const std::string& chipName, unsigned startLine, unsig
     throw std::runtime_error("failed to set GPIO direction");
   }
 
-  const unsigned int offsets[] = {start_line_, drop_line_};
-  if (gpiod_line_config_add_line_settings(lineConfig, offsets, 2, settings) != 0) {
+  std::array<unsigned int, 2> offsets = {start_line_, drop_line_};
+  std::sort(offsets.begin(), offsets.end());
+  if (gpiod_line_config_add_line_settings(lineConfig, offsets.data(), offsets.size(), settings) != 0) {
     gpiod_line_settings_free(settings);
     gpiod_line_config_free(lineConfig);
     gpiod_request_config_free(requestConfig);
@@ -68,8 +73,11 @@ void GpioController::open(const std::string& chipName, unsigned startLine, unsig
     throw std::runtime_error("failed to attach line settings");
   }
 
-  const gpiod_line_value initialValues[] = {GPIOD_LINE_VALUE_INACTIVE, GPIOD_LINE_VALUE_INACTIVE};
-  if (gpiod_line_config_set_output_values(lineConfig, initialValues, 2) != 0) {
+  const std::array<gpiod_line_value, 2> initialValues = {
+    GPIOD_LINE_VALUE_INACTIVE,
+    GPIOD_LINE_VALUE_INACTIVE,
+  };
+  if (gpiod_line_config_set_output_values(lineConfig, initialValues.data(), initialValues.size()) != 0) {
     gpiod_line_settings_free(settings);
     gpiod_line_config_free(lineConfig);
     gpiod_request_config_free(requestConfig);
@@ -86,7 +94,7 @@ void GpioController::open(const std::string& chipName, unsigned startLine, unsig
   gpiod_chip_close(chip);
 
   if (!request) {
-    throw std::runtime_error("failed to request GPIO lines");
+    throw std::runtime_error(std::string("failed to request GPIO lines: ") + std::strerror(errno));
   }
 
   chip_ = request;
