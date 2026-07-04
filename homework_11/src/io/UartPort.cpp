@@ -46,6 +46,18 @@ void UartPort::open(const std::string& device, int baud)
   cfsetispeed(&tio, speed);
   cfsetospeed(&tio, speed);
   tio.c_cflag |= (CLOCAL | CREAD);
+  tio.c_cflag &= ~PARENB;
+  tio.c_cflag &= ~CSTOPB;
+  tio.c_cflag &= ~CSIZE;
+  tio.c_cflag |= CS8;
+  tio.c_cc[VMIN] = 0;
+  tio.c_cc[VTIME] = 0;
+
+  if (tcflush(fd_, TCIOFLUSH) != 0) {
+    const int err = errno;
+    close();
+    throw std::system_error(err, std::generic_category(), "tcflush failed");
+  }
 
   if (tcsetattr(fd_, TCSANOW, &tio) != 0) {
     const int err = errno;

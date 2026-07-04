@@ -26,17 +26,12 @@ std::string chipPathFromName(const std::string& chipName)
 
 GpioController::~GpioController() { close(); }
 
-void GpioController::open(const std::string& chipName, unsigned startLine, unsigned dropLine, bool dryRun)
+void GpioController::open(const std::string& chipName, unsigned startLine, unsigned dropLine)
 {
   close();
   chip_name_ = chipName;
   start_line_ = startLine;
   drop_line_ = dropLine;
-  dry_run_ = dryRun;
-
-  if (dry_run_) {
-    return;
-  }
 
 #if defined(HOMEWORK11_HAS_GPIOD_H)
   const std::string chipPath = chipPathFromName(chip_name_);
@@ -82,7 +77,7 @@ void GpioController::open(const std::string& chipName, unsigned startLine, unsig
     throw std::runtime_error("failed to set initial GPIO values");
   }
 
-  gpiod_request_config_set_consumer(requestConfig, "homework_11");
+  gpiod_request_config_set_consumer(requestConfig, "drone");
   gpiod_line_request* request = gpiod_chip_request_lines(chip, requestConfig, lineConfig);
 
   gpiod_line_settings_free(settings);
@@ -102,7 +97,7 @@ void GpioController::open(const std::string& chipName, unsigned startLine, unsig
 
 void GpioController::close()
 {
-  if (!dry_run_ && chip_) {
+  if (chip_) {
     try {
       resetOutputs();
     }
@@ -115,15 +110,10 @@ void GpioController::close()
   }
 #endif
   chip_ = nullptr;
-  start_ = nullptr;
-  drop_ = nullptr;
 }
 
 void GpioController::setStartReady()
 {
-  if (dry_run_) {
-    return;
-  }
 #if defined(HOMEWORK11_HAS_GPIOD_H)
   if (gpiod_line_request_set_value(static_cast<gpiod_line_request*>(chip_), start_line_, GPIOD_LINE_VALUE_ACTIVE) != 0) {
     throw std::runtime_error("failed to set START line");
@@ -133,9 +123,6 @@ void GpioController::setStartReady()
 
 void GpioController::resetOutputs()
 {
-  if (dry_run_) {
-    return;
-  }
 #if defined(HOMEWORK11_HAS_GPIOD_H)
   auto* request = static_cast<gpiod_line_request*>(chip_);
   if (!request) {
@@ -152,10 +139,6 @@ void GpioController::resetOutputs()
 
 void GpioController::pulseDrop(unsigned microseconds)
 {
-  if (dry_run_) {
-    std::this_thread::sleep_for(std::chrono::microseconds(microseconds));
-    return;
-  }
 #if defined(HOMEWORK11_HAS_GPIOD_H)
   auto* request = static_cast<gpiod_line_request*>(chip_);
   if (gpiod_line_request_set_value(request, drop_line_, GPIOD_LINE_VALUE_ACTIVE) != 0) {
@@ -165,6 +148,8 @@ void GpioController::pulseDrop(unsigned microseconds)
   if (gpiod_line_request_set_value(request, drop_line_, GPIOD_LINE_VALUE_INACTIVE) != 0) {
     throw std::runtime_error("failed to set DROP line low");
   }
+#else
+  (void)microseconds;
 #endif
 }
 

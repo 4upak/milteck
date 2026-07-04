@@ -161,7 +161,7 @@ void MissionProcessor::installSignalHandlers()
 void MissionProcessor::init()
 {
   uart_.open(config_.uart_device, 115200);
-  gpio_.open(config_.gpio_chip, config_.start_line, config_.drop_line, config_.dry_run_gpio);
+  gpio_.open(config_.gpio_chip, config_.start_line, config_.drop_line);
   gpio_.setStartReady();
 }
 

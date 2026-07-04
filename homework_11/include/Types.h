@@ -15,7 +15,6 @@ struct RuntimeConfig {
   std::string gpio_chip = "gpiochip0";
   unsigned start_line = 24;
   unsigned drop_line = 23;
-  bool dry_run_gpio = false;
   unsigned control_period_ms = 20;
   unsigned drop_hold_us = 80000;
 };

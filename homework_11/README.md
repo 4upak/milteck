@@ -1,19 +1,19 @@
-# Homework 11: UART + GPIO autopilot skeleton
+# Homework 11: UART + GPIO autopilot
 
-`homework_11` is the next step after `homework_10`:
-- keep the mission/autopilot idea,
-- replace internal simulation wiring with UART protocol I/O,
-- drive two GPIO outputs: `START` and `DROP`.
+`homework_11` continues `homework_10`, but now the program talks to the checker over UART and drives two GPIO outputs through `libgpiod`.
 
-This folder is a **skeleton** for the DZ11 checker loop, not a finished hit solver.
+The implementation is intentionally aligned with the homework text:
+- UART via `termios`
+- GPIO via `libgpiod`
+- the same code path for simulation and for the Raspberry Pi
 
-## Main ideas
+## Main behavior
 
+- open UART in raw `115200 8N1`
 - parse frames from `protocol/drone_link.h`
-- open UART in raw 115200 mode
-- send `PKT_CONTROL` continuously
-- raise `START` once on launch
-- emit `DROP` pulse when release condition is met
+- raise `START` to `1` on launch and keep it high
+- continuously send `PKT_CONTROL`
+- emit a short `DROP` pulse when release conditions are met
 
 ## CLI
 
@@ -27,20 +27,36 @@ Defaults:
 - start line: `24`
 - drop line: `23`
 
-## Real Raspberry Pi notes
+Use examples:
+
+```bash
+# simulation / socat
+./homework_11_cli /tmp/ttyA gpiochip0 24 23
+
+# real Raspberry Pi UART
+./homework_11_cli /dev/ttyAMA1 gpiochip0 24 23
+```
+
+## Raspberry Pi notes
 
 Typical UART pins:
 - TX: GPIO14, physical pin 8
 - RX: GPIO15, physical pin 10
 - GND: any ground pin
 
-For a simple UART loopback self-test on one Pi:
-- connect **pin 8 (TX)** to **pin 10 (RX)**
+GPIO lines used by default:
+- `START` -> GPIO24 -> physical pin 18
+- `DROP` -> GPIO23 -> physical pin 16
 
-For GPIO line observation with LEDs:
-- `START` on **GPIO24** = physical pin **18**
-- `DROP` on **GPIO23** = physical pin **16**
-- connect each through ~330Ω resistor to GND
+## Pi smoke run with checker
 
-If checker and student app both run on the same Pi and inspect the same GPIO lines in software,
-no physical jumper is needed for `START/DROP`; only UART transport may still need wiring or a simulated endpoint.
+```bash
+sudo socat -d -d \
+  pty,raw,echo=0,mode=666,link=/tmp/ttyA \
+  pty,raw,echo=0,mode=666,link=/tmp/ttyB
+
+sudo ./build/debug/homework_11/homework_11_cli /tmp/ttyA gpiochip0 24 23
+sudo ~/checker_pi_arm64 1 --uart /tmp/ttyB --gpiochip gpiochip0 --start-line 24 --drop-line 23
+```
+
+On shutdown the program resets `START` and `DROP` back to inactive so the lines do not stay latched after exit.
