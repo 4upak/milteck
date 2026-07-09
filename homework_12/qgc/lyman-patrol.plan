@@ -1,0 +1,16 @@
+{
+  "fileType": "Plan",
+  "geoFence": {"circles": [], "polygons": [], "version": 2},
+  "groundStation": "QGroundControl",
+  "mission": {
+    "cruiseSpeed": 5,
+    "firmwareType": 3,
+    "hoverSpeed": 5,
+    "items": [],
+    "plannedHomePosition": [49.0, 32.0, 0],
+    "vehicleType": 10,
+    "version": 2
+  },
+  "rallyPoints": {"points": [], "version": 2},
+  "version": 1
+}
