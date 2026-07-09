@@ -46,9 +46,33 @@ HOMEWORK_08_CPP := \
 	homework_08/src/main.cpp \
 	homework_08/tests/homework_08_tests.cpp
 
+HOMEWORK_09_H := \
+	homework_09/include/Types.h \
+	homework_09/include/MissionProcessor.h \
+	homework_09/include/interfaces/ITargetProvider.h \
+	homework_09/include/interfaces/IBallisticSolver.h \
+	homework_09/include/interfaces/IConfigLoader.h \
+	homework_09/include/solvers/AnalyticalSolver.h \
+	homework_09/include/solvers/TableSolver.h \
+	homework_09/include/providers/JsonTargetProvider.h \
+	homework_09/include/config/FileConfigLoader.h \
+	homework_09/include/config/ComponentFactory.h \
+	homework_09/include/drone/DroneState.h
+
+HOMEWORK_09_CPP := \
+	homework_09/src/MissionProcessor.cpp \
+	homework_09/src/solvers/AnalyticalSolver.cpp \
+	homework_09/src/solvers/TableSolver.cpp \
+	homework_09/src/providers/JsonTargetProvider.cpp \
+	homework_09/src/config/FileConfigLoader.cpp \
+	homework_09/src/config/ComponentFactory.cpp \
+	homework_09/src/drone/DroneState.cpp \
+	homework_09/src/main.cpp \
+	homework_09/tests/homework_09_tests.cpp
+
 format:
-	clang-format --style=file:.devcontainer/.clang-format -i $(HOMEWORK_06_CPP) $(HOMEWORK_07_HPP) $(HOMEWORK_07_CPP) $(HOMEWORK_08_H) $(HOMEWORK_08_CPP)
-	cmake-format -c .devcontainer/.cmake-format.json -i homework_06/CMakeLists.txt homework_07/CMakeLists.txt homework_08/CMakeLists.txt
+	clang-format --style=file:.devcontainer/.clang-format -i $(HOMEWORK_06_CPP) $(HOMEWORK_07_HPP) $(HOMEWORK_07_CPP) $(HOMEWORK_08_H) $(HOMEWORK_08_CPP) $(HOMEWORK_09_H) $(HOMEWORK_09_CPP)
+	cmake-format -c .devcontainer/.cmake-format.json -i homework_06/CMakeLists.txt homework_07/CMakeLists.txt homework_08/CMakeLists.txt homework_09/CMakeLists.txt
 
 lint:
 	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_06/src/ballistics.cpp
@@ -68,6 +92,15 @@ lint:
 	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_08/src/config/ComponentFactory.cpp
 	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_08/src/main.cpp
 	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_08/tests/homework_08_tests.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/MissionProcessor.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/solvers/AnalyticalSolver.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/solvers/TableSolver.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/providers/JsonTargetProvider.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/config/FileConfigLoader.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/config/ComponentFactory.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/drone/DroneState.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/src/main.cpp
+	clang-tidy --config-file=.devcontainer/.clang-tidy -p build/debug homework_09/tests/homework_09_tests.cpp
 
 test:
 	cmake --preset debug

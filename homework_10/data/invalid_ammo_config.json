@@ -1,0 +1,8 @@
+{
+  "drone": {
+    "position": { "x": 0.0, "y": 0.0 },
+    "altitude": 100.0,
+    "attackSpeed": 25.0
+  },
+  "ammo": "UNKNOWN-AMMO"
+}
