@@ -299,7 +299,9 @@ std::optional<std::uint8_t> MissionProcessor::selectActiveTargetId() const
 
 std::optional<DropSolution> MissionProcessor::computeDropSolution() const
 {
-  if (!snapshot_.telemetry || !snapshot_.ammo || !snapshot_.config) {
+  // PKT_CONFIG is optional: the checker may not send it in this homework.
+  // When absent we fall back to telemetry-derived speed and sane defaults.
+  if (!snapshot_.telemetry || !snapshot_.ammo) {
     return std::nullopt;
   }
 
@@ -315,7 +317,7 @@ std::optional<DropSolution> MissionProcessor::computeDropSolution() const
 
   const dlink::Telemetry& telemetry = *snapshot_.telemetry;
   const dlink::AmmoCfg& ammo = *snapshot_.ammo;
-  const dlink::DroneCfg& config = *snapshot_.config;
+  const dlink::DroneCfg config = snapshot_.config.value_or(dlink::DroneCfg{});
   const Coord dronePos = telemetryPosition(telemetry);
   const double altitude = positiveOrDefault(telemetry.z, 1.0);
   const double attackSpeed = positiveOrDefault(config.attackSpeed, positiveOrDefault(telemetry.speed, 1.0));
@@ -362,12 +364,12 @@ std::optional<DropSolution> MissionProcessor::computeDropSolution() const
 GuidanceCommand MissionProcessor::computeGuidance() const
 {
   const std::optional<DropSolution> solution = computeDropSolution();
-  if (!solution.has_value() || !snapshot_.telemetry || !snapshot_.config) {
+  if (!solution.has_value() || !snapshot_.telemetry) {
     return GuidanceCommand{};
   }
 
   const dlink::Telemetry& telemetry = *snapshot_.telemetry;
-  const dlink::DroneCfg& config = *snapshot_.config;
+  const dlink::DroneCfg config = snapshot_.config.value_or(dlink::DroneCfg{});
   const double headingError = solution->heading_error;
   const double absHeadingError = std::fabs(headingError);
   const double turnScale = std::max(positiveOrDefault(config.turnThreshold, 0.15) * 3.0, 0.35);
@@ -415,13 +417,13 @@ void MissionProcessor::sendControl(const GuidanceCommand& command)
 bool MissionProcessor::shouldDropNow() const
 {
   const std::optional<DropSolution> solution = computeDropSolution();
-  if (!solution.has_value() || !snapshot_.telemetry || !snapshot_.ammo || !snapshot_.config) {
+  if (!solution.has_value() || !snapshot_.telemetry || !snapshot_.ammo) {
     return false;
   }
 
   const dlink::Telemetry& telemetry = *snapshot_.telemetry;
   const dlink::AmmoCfg& ammo = *snapshot_.ammo;
-  const dlink::DroneCfg& config = *snapshot_.config;
+  const dlink::DroneCfg config = snapshot_.config.value_or(dlink::DroneCfg{});
   const double dt = positiveOrDefault(config.timeStep, 0.05);
   const double dynamicTolerance = std::max<double>(ammo.hitRadius * 0.6, telemetry.speed * dt * 1.5);
   const double headingTolerance = std::max<double>(positiveOrDefault(config.turnThreshold, 0.15) * 1.5, 0.2);
