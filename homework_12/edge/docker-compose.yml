@@ -1,0 +1,22 @@
+services:
+  c2_service:
+    build:
+      context: ./c2
+      dockerfile: Dockerfile
+    container_name: c2_service
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./config/c2_config.json:/etc/c2/c2_config.json:ro
+      - ./logs:/var/log/c2
+
+  auto_stub:
+    image: ghcr.io/yevhenkuznetsov/hw12-auto-stub:latest
+    container_name: auto_stub
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ../qgc/lyman-patrol.plan:/app/qgc/lyman-patrol.plan:ro
+    depends_on:
+      c2_service:
+        condition: service_healthy

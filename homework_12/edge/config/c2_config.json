@@ -1,0 +1,5 @@
+{
+  "fc_port": 14551,
+  "waypoint_port": 14560,
+  "log_file": "/var/log/c2/c2.log"
+}

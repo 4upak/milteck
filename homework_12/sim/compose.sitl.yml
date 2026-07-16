@@ -1,0 +1,8 @@
+services:
+  fc_sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fc_sim
+    network_mode: host
+    restart: unless-stopped
